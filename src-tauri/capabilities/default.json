@@ -1,0 +1,6 @@
+{
+  "identifier": "default",
+  "description": "BootFlow 主窗口的默认权限集。首版只读，不需要任何文件系统或 shell 权限。",
+  "windows": ["main"],
+  "permissions": ["core:default", "log:default"]
+}

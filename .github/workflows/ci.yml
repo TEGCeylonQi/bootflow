@@ -1,0 +1,75 @@
+# BootFlow 持续集成
+#
+# 拆成两个 job 是有意的：
+#
+# - **前端自检跑在 Linux 上**。`tsc` 与界面自检（令牌 + 数据契约）都不依赖 Windows，
+#   放在 ubuntu 上跑得又快又便宜。这两个检查拦的是最容易悄悄漂移的东西：
+#   样式令牌写错、TS 与 Rust 的结构体字段对不上。
+# - **Rust 必须跑在 windows-latest 上**。整个后端调的是 windows-rs，
+#   换到别的系统连编译都过不去。而且它的测试里有一批是**真机断言**
+#   （catalog 验签、事件日志解析、服务枚举的缓冲区对齐），
+#   只有真正在 Windows 上跑过才算验证过。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  # CI 上没必要为了体积做增量优化，保持默认即可
+
+jobs:
+  web:
+    name: 前端（类型 + 界面自检 + 构建）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      # 会跑两件事：tsc --noEmit，以及 tools/ui-check.mjs
+      # 后者校验样式令牌是否存在、TS 与 Rust 的数据契约是否一致。
+      # 这类问题 tsc 看不见、编译不报错、样式静默失效，必须静态拦住。
+      - name: 类型检查与界面自检
+        run: npm run check
+
+      - name: 构建前端产物
+        run: npm run build
+
+  rust:
+    name: Rust（clippy + 测试，Windows）
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Clippy（警告即失败）
+        working-directory: src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
+      # 测试里有相当一部分是"读真实系统"的断言：系统文件的 catalog 验签、
+      # 事件日志解析、服务枚举的缓冲区对齐。它们不是纯粹的单元测试，
+      # 但正是这些才证明工具在真机上读得对。
+      #
+      # ⚠️ 全量验收（`real_machine_full_report`）标了 `#[ignore]`，不在这里跑：
+      # 它断言"至少读到 3 类来源、必须有禁改区项"，这些成立与否取决于机器上
+      # 装了什么。runner 是另一台干净虚拟机，跑它只会得到假红灯。
+      # 真机验收走：cargo test real_machine_full_report -- --ignored --nocapture
+      - name: 单元测试
+        working-directory: src-tauri
+        run: cargo test

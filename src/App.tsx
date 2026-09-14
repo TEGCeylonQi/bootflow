@@ -1,0 +1,92 @@
+import { useEffect, useRef } from 'react'
+import { useAppStore } from '@/store/useAppStore'
+import { useKeyboardNav } from '@/hooks/useKeyboardNav'
+import { TopBar } from '@/components/TopBar'
+import { Sidebar } from '@/components/Sidebar/Sidebar'
+import { WorkCanvas } from '@/components/Canvas/WorkCanvas'
+import { PropertyPanel } from '@/components/Property/PropertyPanel'
+import { ChangeDock } from '@/components/Plan/ChangeDock'
+import { ColResizer } from '@/components/common/ColResizer'
+
+/** 分栏宽度的默认值与约束，与 store 里的夹取范围保持一致 */
+const PANE = {
+  sidebar: { def: 300, min: 220, max: 460 },
+  property: { def: 340, min: 260, max: 520 },
+} as const
+
+/**
+ * 四区布局 + 底部变更篮：
+ *   ┌────────────────── TopBar ──────────────────┐
+ *   │ 清单 │ 画布（启动时序 / 耗时分析） │ 详情  │
+ *   ├────────────────────────────────────────────┤
+ *   │  变更篮（仅在编排模式或存在草稿时出现）      │
+ *   └────────────────────────────────────────────┘
+ *
+ * 两个细节：
+ *
+ * - **分栏宽度用户可调、并被记住。** 三栏各司其职，但各人的机器上
+ *   "该看清单还是该看详情"差别很大（有人先扫一遍清单，有人点一项看半天）。
+ *   写死宽度等于替用户做这个决定。
+ *
+ * - **变更篮占一整行而不是浮在右侧。** 编排是一件事，不是一个面板里的一个区块。
+ *   它需要能被一眼看到、被整体审视，而不是藏在某栏的某个折叠区里。
+ */
+export default function App() {
+  const scan = useAppStore((s) => s.scan)
+  const sidebarWidth = useAppStore((s) => s.sidebarWidth)
+  const propertyWidth = useAppStore((s) => s.propertyWidth)
+  const setPaneWidth = useAppStore((s) => s.setPaneWidth)
+  const booted = useRef(false)
+
+  useKeyboardNav()
+
+  useEffect(() => {
+    // StrictMode 下 effect 会跑两次，用 ref 挡住重复扫描
+    if (booted.current) return
+    booted.current = true
+    void scan()
+  }, [scan])
+
+  return (
+    <div className="grid h-full grid-rows-[48px_minmax(0,1fr)_auto] overflow-hidden bg-base">
+      <TopBar />
+
+      <div
+        className="grid min-h-0"
+        style={{
+          gridTemplateColumns: `${sidebarWidth}px 5px minmax(0,1fr) 5px ${propertyWidth}px`,
+        }}
+      >
+        <Sidebar />
+
+        <ColResizer
+          label="调整清单宽度"
+          side="left"
+          width={sidebarWidth}
+          onChange={(w) => setPaneWidth('sidebar', w)}
+          min={PANE.sidebar.min}
+          max={PANE.sidebar.max}
+          resetWidth={PANE.sidebar.def}
+        />
+
+        <main className="min-w-0">
+          <WorkCanvas />
+        </main>
+
+        <ColResizer
+          label="调整详情宽度"
+          side="right"
+          width={propertyWidth}
+          onChange={(w) => setPaneWidth('property', w)}
+          min={PANE.property.min}
+          max={PANE.property.max}
+          resetWidth={PANE.property.def}
+        />
+
+        <PropertyPanel />
+      </div>
+
+      <ChangeDock />
+    </div>
+  )
+}

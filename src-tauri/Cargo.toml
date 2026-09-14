@@ -1,0 +1,62 @@
+[package]
+name = "bootflow"
+version = "0.1.0"
+description = "BootFlow — Windows 启动项体检与编排工具"
+authors = ["BootFlow Contributors"]
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+# Tauri 2 约定的三件套：desktop 走 rlib，移动端走 staticlib/cdylib
+name = "bootflow_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-log = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v5"] }
+log = "0.4"
+winreg = "0.52"
+# 图标以 base64 PNG 传给前端，避免前端再引一个图片解码器
+base64 = "0.22"
+# 只编 PNG，不引 image 全家桶（后者默认会拉进 jpeg/webp/gif 等一堆解码器）
+png = "0.17"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_WinTrust",
+    # WINTRUST_DATA / WINTRUST_FILE_INFO 被 windows crate 挂在 Cryptography 网关下，
+    # 没这个 feature 会 import 不到——尽管它们属于 WinTrust 模块
+    "Win32_Security_Cryptography",
+    # CryptCATAdmin* —— catalog 签名验证（系统文件绝大多数不内嵌签名）
+    "Win32_Security_Cryptography_Catalog",
+    "Win32_System_Com",
+    "Win32_System_Threading",
+    # ITaskService / ITaskFolder / IRegisteredTask —— 计划任务扫描（T6）
+    "Win32_System_TaskScheduler",
+    # EnumServicesStatusExW / QueryServiceConfig2W —— 服务扫描（T7）
+    "Win32_System_Services",
+    # EvtQuery / EvtNext / EvtRender —— 开机耗时事件日志（T8）
+    "Win32_System_EventLog",
+    "Win32_Storage_FileSystem",
+    "Win32_Graphics_Gdi",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[profile.release]
+# 发布体积优先：这类小工具没必要为调试信息付出几十 MB
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

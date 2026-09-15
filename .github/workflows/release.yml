@@ -74,6 +74,11 @@ jobs:
 
             **这是只读体检版，不会修改你系统的任何一项配置。** 所有功能都是读取与呈现。
 
+            **本版本默认以管理员权限启动**（每次冷启动会弹一次 UAC）。这是因为开机性能日志
+            （`Microsoft-Windows-Diagnostics-Performance`）的读取权限只授予管理员——以普通权限
+            运行时，程序能正常列出全部启动项，但读不到开机耗时。如果拒绝 UAC，程序仍能运行，
+            界面会如实显示「未读取」并提供诊断日志入口，绝不伪造精度。
+
             ### 能做什么
 
             - 扫出四类启动来源：启动文件夹、注册表 Run / RunOnce（含 32 位视图）、
@@ -87,8 +92,8 @@ jobs:
 
             | 文件 | 说明 |
             |---|---|
-            | `BootFlow___VERSION___x64-setup.exe` | 安装版，用户级安装，**不需要管理员权限** |
-            | `bootflow-portable-x64.zip` | 便携版，解压直接运行，不写注册表 |
+            | `BootFlow___VERSION___x64-setup.exe` | 安装版，用户级安装，**无需管理员权限安装**；但启动时需要管理员授权（每次冷启动弹一次 UAC） |
+            | `bootflow-portable-x64.zip` | 便携版，解压直接运行，不写注册表；同样默认以管理员启动 |
 
             两个都需要 [WebView2 运行时](https://developer.microsoft.com/microsoft-edge/webview2/)。
             Windows 11 与较新的 Windows 10 已内置，通常无需另行安装。

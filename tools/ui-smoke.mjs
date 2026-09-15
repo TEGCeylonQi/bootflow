@@ -268,6 +268,163 @@ try {
     return '自记账趋势已展示'
   })
 
+  /*
+   * ——— 4c. 单项开销：把耗时拆到「每一项」———
+   *
+   * 这是本轮的核心。Windows 没有单项耗时计时器，能实测的是**进程创建时刻**
+   * （"第几秒出现"），只有被判慢的项才有真正的耗时。两条通路都要能在界面上
+   * 看到，而且**必须写清楚出现时刻不是耗时**——否则用户会把 12.4s 读成
+   * "这一项拖慢了 12.4 秒"，那是把整个开机时长安在一项头上。
+   */
+  await expect('耗时分析把开销拆到单项（每项在开机后第几秒出现）', async () => {
+    assert((await page.locator('text=每项在开机后第几秒出现').count()) > 0, '没有单项出现时刻时间轴')
+    assert(
+      (await page.locator('text=/进程创建时刻/').count()) > 0,
+      '没有标明数据来源是内核记录的进程创建时刻',
+    )
+    // 归因成功的项必须真的画出来，不能只有一个空壳标题。
+    // 每行是一个按钮，title 里带着"内核记录的进程创建时刻"。
+    const rows = await page.locator('button[title*="内核记录的进程创建时刻"]').count()
+    assert(rows > 0, '时间轴没有任何一行，说明归因结果没渲染出来')
+    return `已归因并渲染 ${rows} 行`
+  })
+
+  /*
+   * 这条盯的是「诚实原则」最容易破的一个口子：把"出现时刻"当"耗时"。
+   * 断言的是那句警告**真的在界面上**，而不是只写在代码注释里。
+   */
+  await expect('单项时间轴明确写出「出现时刻不是花了多久」', async () => {
+    assert(
+      (await page.locator('text=/出现时刻」不是「花了多久/').count()) > 0,
+      '单项时间轴没有澄清"出现时刻 ≠ 耗时"',
+    )
+    assert(
+      (await page.locator('text=/Windows 不为单个启动项记录/').count()) > 0,
+      '没有解释为什么这一栏给不出"花了多久"',
+    )
+    // 并且要指路：时间轴回答不了"它有多重"，那块数据在下面
+    assert(
+      (await page.locator('text=/它有多重/').count()) > 0,
+      '没有把"有多重"这个问题指给启动影响那一块——用户会以为这里就是全部',
+    )
+    return '边界已写明'
+  })
+
+  /*
+   * ——— 4c-2. 启动影响：Windows 自己量出来的单项开销 ———
+   *
+   * 这一栏是「拆不到单项」这个问题的真正答案：WDI 每次登录后都会为每个进程
+   * 记下 CPU 时间与磁盘读写量，**任务管理器的「启动影响」列读的就是这份数据**。
+   * 用户能打开任务管理器逐条对照——所以档位用词也必须和任务管理器一致
+   * （高/中/低），换个说法就等于逼用户做翻译。
+   */
+  await expect('耗时分析给出「每一项占了多少资源」', async () => {
+    assert(
+      (await page.locator('text=每一项占了多少资源').count()) > 0,
+      '没有启动影响区块',
+    )
+    assert(
+      (await page.locator('text=/与任务管理器同源/').count()) > 0,
+      '没有标明数据与任务管理器同源',
+    )
+    const rows = await page.locator('button[title*="启动影响："]').count()
+    assert(rows > 0, '启动影响一行都没渲染出来')
+    return `已渲染 ${rows} 行`
+  })
+
+  /*
+   * 这条盯的是这一栏最容易被误读的地方：把"占了多少 CPU"读成"让开机慢了几秒"。
+   * CPU 时间跨核累加，多线程程序的时间可以超过窗口本身长度——
+   * 所以"这是占用不是耗时"这句话必须真的写在界面上，而不是只在代码注释里。
+   */
+  await expect('启动影响写明是占用而不是耗时', async () => {
+    assert(
+      (await page.locator('text=/让开机慢了几秒/').count()) > 0,
+      '没有澄清"启动影响 ≠ 让开机慢了多久"',
+    )
+    assert(
+      (await page.locator('text=/资源占用/').count()) > 0,
+      '没有把这一栏的性质说成"资源占用"',
+    )
+    return '口径已写明'
+  })
+
+  await expect('详情面板单列「启动影响」一栏', async () => {
+    assert((await page.locator('text=启动影响').count()) > 0, '详情面板没有启动影响一栏')
+    assert(
+      (await page.locator('text=/与任务管理器同一阈值|本次未取得/').count()) > 0,
+      '启动影响一栏既没给档位说明、也没给"读不到"的原因',
+    )
+    return '已单列'
+  })
+
+  /*
+   * ——— 4c-3. 清单能按「资源占用」重排 ———
+   *
+   * "谁先跑起来"和"谁最费资源"是两个不同的问题：时序上排在很后面的项
+   * 完全可能是最重的那个。所以必须让用户能切换，而不是替他挑一个。
+   * 这里断言的是：开关在、能点、点了之后清单里的首项真的变了。
+   */
+  await expect('清单提供「按资源占用」排序', async () => {
+    assert((await page.locator('button:has-text("按开机顺序")').count()) > 0, '没有排序开关')
+    const byImpact = page.locator('button:has-text("按资源占用")').first()
+    assert((await byImpact.count()) > 0, '没有「按资源占用」这一档')
+
+    const firstName = async () =>
+      (await page.locator('[data-item-row]').first().getAttribute('data-item-row')) ?? ''
+
+    const before = await firstName()
+    await byImpact.click()
+    await page.waitForTimeout(300)
+    const after = await firstName()
+    assert(before !== after, `切换排序后清单首项没变（都是 ${before}）——排序没真的生效`)
+
+    // 切回去，别把后面断言依赖的默认顺序留在被改过的状态
+    await page.locator('button:has-text("按开机顺序")').first().click()
+    await page.waitForTimeout(200)
+    assert((await firstName()) === before, '切回默认排序后没有恢复原顺序')
+    return '可切换且可恢复'
+  })
+
+  /*
+   * ——— 4d. 自记账开关必须真的可控（opt-in）———
+   *
+   * 自记账要在系统里常驻一个自启条目。哪怕它无害，用户没同意就不该加，
+   * 加了也必须能关掉。这里断言三件事：开关在、文案说清默认关、能拨动。
+   * 状态只以 mock 后端返回值为准（不做乐观更新），所以拨完要真的变。
+   */
+  await expect('自记账提供开关且默认关闭', async () => {
+    assert((await page.locator('text=每次开机记一条用时').count()) > 0, '没有自记账开关')
+    assert((await page.locator('text=/默认关闭/').count()) > 0, '没有标明默认关闭')
+    const sw = page.locator('button[role="switch"]').first()
+    assert((await sw.count()) > 0, '开关控件不存在')
+    assert(
+      (await sw.getAttribute('aria-checked')) === 'false',
+      '默认状态不是关闭——自记账不该默认往用户系统里加自启条目',
+    )
+    return '默认关'
+  })
+
+  await expect('自记账开关可以拨开', async () => {
+    const sw = page.locator('button[role="switch"]').first()
+    await sw.click()
+    await page.waitForTimeout(300)
+    assert((await sw.getAttribute('aria-checked')) === 'true', '拨开后状态没有跟着变')
+    return '可开启'
+  })
+
+  await expect('自记账开关可以再关掉并说明不影响其余功能', async () => {
+    const sw = page.locator('button[role="switch"]').first()
+    await sw.click()
+    await page.waitForTimeout(300)
+    assert((await sw.getAttribute('aria-checked')) === 'false', '关掉后状态没有跟着变')
+    assert(
+      (await page.locator('text=/不依赖这个开关/').count()) > 0,
+      '没有说明关掉后单项数据照常可见——用户会以为关掉就什么都看不到了',
+    )
+    return '可回退且边界清楚'
+  })
+
   await expect('导出报告菜单提供三种格式', async () => {
     await page.locator('button', { hasText: '导出报告' }).first().click()
     await page.waitForSelector('text=Markdown 报告', { timeout: 5000 })
@@ -323,6 +480,22 @@ try {
 
       await denied.locator('button[title*="耗时占比"]').click()
       await denied.waitForSelector('text=这次没能读到开机耗时', { timeout: 5000 })
+
+      /*
+       * 这条通路也要单独交代自己的"读不到"。
+       *
+       * 真实机器上非提权运行时，系统事件日志和 WDI 目录是**一起**被拒的，
+       * 所以这里必须同时出现两块独立的说明——如果只有一块，
+       * 说明有人把它们当成了"一件事"，将来其中一条恢复时另一条就说不清了。
+       */
+      assert(
+        (await denied.locator('text=/读取这份数据需要管理员权限/').count()) > 0,
+        '启动影响那一块没有交代自己为什么读不到',
+      )
+      assert(
+        (await denied.locator('text=/每一项占了多少资源/').count()) > 0,
+        '启动影响那一块整个消失了——读不到不等于不该出现',
+      )
 
       // 启动项本身不受影响，这条要在界面上说清楚
       assert((await denied.locator('text=这不影响上面列的启动项').count()) > 0, '没有说明其余数据不受影响')

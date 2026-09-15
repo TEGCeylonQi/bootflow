@@ -11,10 +11,7 @@
 //! 4. **诚实** —— `consequence` 只说有据可依的（"顺序会变化"），
 //!    不编造"会快 X 秒"（计划 §3.5.3 硬规则 5）。
 
-// T43 阶段性标记：preview 引擎已实现，待 T42 事务层 + commands 接线后移除。
-#![allow(dead_code)]
-
-use crate::model::{DesiredState, RiskLevel, StartupItem};
+use crate::model::{RiskLevel, StartupItem};
 
 /// 一次原子动作。
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -46,16 +43,6 @@ pub struct EditRequest {
     pub start_type: Option<u32>, // 服务：2=AUTO 3=DEMAND
     pub task_enabled: Option<bool>,
     pub trigger_enabled: Option<bool>,
-}
-
-impl EditRequest {
-    /// 是否一个字段都没填（= 无操作）。
-    pub fn is_noop(&self) -> bool {
-        self.enabled.is_none()
-            && self.start_type.is_none()
-            && self.task_enabled.is_none()
-            && self.trigger_enabled.is_none()
-    }
 }
 
 /// 把 EditRequest 编译成一个（单个启动项的）动作计划。
@@ -180,22 +167,10 @@ fn start_type_name(t: Option<u32>) -> String {
     }
 }
 
-/// 把 `DesiredState`（模型的预留字段）转成 `EditRequest`。
-/// 供编排层将来使用；现在主要给 T42 事务层孵化。
-///
-/// ⚠️ 目前只透传 `enabled`；`start_type` 在 `DesiredState` 里没有对应字段
-/// （那是服务的专属字段，走 `EditRequest.start_type` 显式传），所以返回 None。
-pub fn from_desired(d: &DesiredState) -> EditRequest {
-    EditRequest {
-        enabled: d.enabled,
-        ..Default::default()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{BootPhase, ItemKind, ItemTiming, Scope, SignerInfo, ValidityStatus};
+    use crate::model::{BootPhase, DesiredState, ItemKind, ItemTiming, Scope, SignerInfo, ValidityStatus};
 
     fn item(id: &str, enabled: bool, source: crate::model::SourceKind) -> StartupItem {
         StartupItem {

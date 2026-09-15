@@ -55,6 +55,8 @@ pub async fn scan_all() -> ScanResult {
                 elevated: false,
                 scanned_at: chrono::Local::now().to_rfc3339(),
                 boot_timeline: BootTimeline::default(),
+                observation: crate::model::ItemObservation::default(),
+                impact: crate::model::ImpactOverview::default(),
                 errors: vec![format!("扫描过程意外中断：{e}")],
             }
         })
@@ -131,13 +133,64 @@ pub fn scan_all_blocking() -> ScanResult {
         ),
     }
 
-    let stats = pipeline::finalize(&mut all, &timeline);
+    // ─────────── 进程采样（"单项"那条通路）───────────
+    //
+    // 与上面的时间轴**互相独立**：这条不需要任何权限、每次都拿得到。
+    // 它给出每一项"在开机后第几秒出现"（内核记录的进程创建时刻），
+    // 这正是"拆到单项"能落地的地方——时间轴读不到时它照样有数据。
+    let snapshot = diag::proc_snapshot::capture();
+    if snapshot.is_available() {
+        log::info!(
+            "进程采样：拍摄于开机后 {:?}ms，共 {} 个进程",
+            snapshot.captured_at_offset_ms,
+            snapshot.procs.len()
+        );
+    } else {
+        log::info!(
+            "进程采样不可用：{}",
+            snapshot.unavailable_reason.as_deref().unwrap_or("原因未知")
+        );
+    }
+
+    // ─────────── WDI「启动影响」（Windows 自己记的单项开销）───────────
+    //
+    // 与上面两条都不同：它**要提权**（该目录对普通用户连列目录都拒），
+    // 但换来的是唯一一份**由 Windows 亲自量出来的单项资源消耗**——
+    // 任务管理器「启动影响」列读的就是它，用户可自行对照复核。
+    // 读不到不影响任何其它通路，所以单独上报、单独计。
+    let startup_info = diag::startup_info::capture();
+    if startup_info.is_available() {
+        log::info!(
+            "启动影响：{} 条记录（窗口 {:?}ms，来自 {:?}，当前用户 {}）",
+            startup_info.records.len(),
+            startup_info.window_ms,
+            startup_info.source_sid,
+            startup_info.is_current_user
+        );
+    } else {
+        log::info!(
+            "启动影响数据不可用：{}",
+            startup_info.unavailable_reason.as_deref().unwrap_or("原因未知")
+        );
+    }
+
+    let mut impact_overview = crate::model::ImpactOverview::from_report(&startup_info);
+
+    let stats = pipeline::finalize(
+        &mut all,
+        &timeline,
+        &snapshot,
+        &startup_info,
+        &mut impact_overview,
+    );
 
     log::info!(
-        "扫描完成：共 {} 项（禁改区 {}，实测耗时 {}），失效 {}，重复 {}，给出建议 {}",
+        "扫描完成：共 {} 项（禁改区 {}，实测耗时 {}，实测出现时刻 {}，实测影响 {}），失效 {}，重复 {}，给出建议 {}",
         stats.total,
         stats.locked,
         stats.measured,
+        stats.observed,
+        stats.impacted,
         stats.dead + stats.not_executable,
         stats.duplicates,
         stats.advised
@@ -149,6 +202,13 @@ pub fn scan_all_blocking() -> ScanResult {
         elevated,
         scanned_at: chrono::Local::now().to_rfc3339(),
         boot_timeline: timeline,
+        observation: crate::model::ItemObservation {
+            captured_at_offset_ms: snapshot.captured_at_offset_ms,
+            process_count: snapshot.procs.len(),
+            observed_count: stats.observed,
+            unavailable_reason: snapshot.unavailable_reason.clone(),
+        },
+        impact: impact_overview,
         errors,
     }
 }

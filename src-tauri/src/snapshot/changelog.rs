@@ -201,11 +201,10 @@ pub fn recent(n: usize) -> Vec<ChangeEntry> {
 mod tests {
     use super::*;
 
-    /// 与 store.rs 相同的临时 %APPDATA% 沙箱（避免并行测试踩踏）。
-    static APPDATA_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
+    /// 与 store.rs 相同的临时 %APPDATA% 沙箱。锁必须**共用** `crate::testenv` 那把：
+    /// 两个模块改的是同一个 `APPDATA`，各持一把锁彼此拦不住，会随机失败。
     fn with_temp_appdata<F: FnOnce()>(test_name: &str, f: F) {
-        let _guard = APPDATA_LOCK.lock().unwrap();
+        let _guard = crate::testenv::lock();
         let dir = std::env::temp_dir().join(format!("bootflow-{}-{}", test_name, std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();

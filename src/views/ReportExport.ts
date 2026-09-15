@@ -38,13 +38,36 @@ const fmtMs = (ms: number) => `${(ms / 1000).toFixed(2)}s`
 /**
  * 耗时文案。**估算值绝不给具体时长**——只给"大约什么时候启动"。
  * 给它一个数字，用户就会当成实测值去比较，那是伪造精度。
+ *
+ * 两条实测通路分别写：`duration_ms` 是"花了多久"，`observed_start_ms` 是
+ * "什么时候出现"。导出到表格里更要说清——看表格的人没有 tooltip。
  */
 const timingText = (it: StartupItem): string => {
   const t = it.timing
+  if (t.durationMs !== undefined) return `实测耗时 ${fmtMs(t.durationMs)}`
+  if (t.observedStartMs !== undefined) return `实测出现于 ${fmtMs(t.observedStartMs)}`
   if (t.confidence === 'none') return '未记录'
-  if (t.confidence === 'measured') return `实测 ${fmtMs(t.durationMs ?? 0)}`
   return `估算（约在第 ${((t.startEstimateMs ?? 0) / 1000).toFixed(1)}s 启动）`
 }
+
+/** 「开机后第几秒出现」单独一列——它和"耗时"是两个量，不能挤在一格。 */
+const observedText = (it: StartupItem): string =>
+  it.timing.observedStartMs === undefined ? '' : fmtMs(it.timing.observedStartMs)
+
+/**
+ * 「启动影响」文案。与耗时**分开一列**，因为它是另一个量：
+ * CPU 时间可以跨核累加，多线程程序的时间会超过窗口长度，
+ * 拿它当"让开机慢了几秒"是错的。
+ */
+const impactText = (it: StartupItem): string => {
+  const im = it.timing.impact
+  if (!im) return ''
+  const label = { low: '低', medium: '中', high: '高' }[im.level]
+  return `${label}（CPU ${fmtMs(im.cpuMs)} · 磁盘 ${fmtBytes(im.diskBytes)}）`
+}
+
+const fmtBytes = (b: number): string =>
+  b >= 1_048_576 ? `${(b / 1_048_576).toFixed(1)}MB` : `${Math.round(b / 1024)}KB`
 
 function csvCell(v: unknown): string {
   const s = String(v ?? '')
@@ -83,6 +106,8 @@ export function toCSV(items: StartupItem[]): string {
     '是否启用',
     '启动时机',
     '耗时',
+    '开机后出现时刻',
+    '启动影响',
     '数据可信度',
     '签名',
     '发布者',
@@ -107,6 +132,8 @@ export function toCSV(items: StartupItem[]): string {
         it.enabled ? '是' : '否',
         PHASE_LABEL[it.bootPhase],
         timingText(it),
+        observedText(it),
+        impactText(it),
         CONFIDENCE_LABEL[it.timing.confidence] ?? it.timing.confidence,
         it.signer.isSigned ? '已签名' : '未签名',
         it.signer.publisher ?? '',
@@ -124,8 +151,136 @@ export function toCSV(items: StartupItem[]): string {
 
 /* ─────────────────────── Markdown ─────────────────────── */
 
+/**
+ * 报告里的「单项出现时刻」小节。
+ *
+ * 为什么这一段必须自己带解释，而不是只甩一张表：报告是**脱离界面**看的，
+ * 看到"12.4s"的人不会知道那是"出现时刻"还是"耗时"。把口径写在表前面，
+ * 是这份报告能不能被信任的关键。
+ */
+function observationLines(obs: ScanResult['observation'], items: StartupItem[]): string[] {
+  if (!obs || obs.capturedAtOffsetMs === undefined) {
+    return [
+      `- 单项出现时刻：**本次未取得** ${obs?.unavailableReason ? `—— ${obs.unavailableReason}` : ''}`.trimEnd(),
+      '',
+    ]
+  }
+
+  const rows = items
+    .filter((it) => it.timing.observedStartMs !== undefined)
+    .sort((a, b) => (a.timing.observedStartMs ?? 0) - (b.timing.observedStartMs ?? 0))
+
+  const out: string[] = []
+  out.push(
+    `- 单项出现时刻：采样拍于开机后 ${fmtMs(obs.capturedAtOffsetMs)}，` +
+      `共 ${obs.processCount} 个进程，其中 ${rows.length} 项对应上了启动项`,
+  )
+  out.push('')
+  out.push(
+    '> 下表是**每一项在开机后第几秒出现**，来自内核记录的进程创建时刻（实测）。' +
+      '它**不是**"花了多久"——那需要单独的一次测量（见下面「启动影响」一节）。',
+  )
+  out.push('')
+
+  if (rows.length > 0) {
+    out.push('| 启动项 | 类型 | 开机后出现 | 备注 |')
+    out.push('| --- | --- | ---: | --- |')
+    for (const it of rows) {
+      const note =
+        it.timing.durationMs !== undefined
+          ? `系统实测耗时 ${fmtMs(it.timing.durationMs)}`
+          : '（系统没有记录它的耗时）'
+      out.push(
+        `| ${mdCell(displayNameOf(it))} | ${KIND_META[resolveKind(it)].label} | ` +
+          `${fmtMs(it.timing.observedStartMs ?? 0)} | ${mdCell(note)} |`,
+      )
+    }
+  } else {
+    out.push('_没有一项能与采样到的进程对应上（常见的两个原因见界面上的说明）。_')
+  }
+  out.push('')
+  return out
+}
+
+/**
+ * 报告里的「启动影响」小节。
+ *
+ * 这是 Windows **自己**量出来的单项开销，也是任务管理器「启动影响」列的同一份数据。
+ * 报告必须写明三件事，缺一件这张表就会被误读：
+ *
+ * 1. 它量的是**资源占用**，不是时长（CPU 时间跨核累加，可以超过窗口长度）。
+ * 2. 数字只覆盖**登录后的那段窗口**，不是整次开机。
+ * 3. 数据来路——用户能自己去那个文件里核对，这是它最值钱的地方。
+ */
+function impactLines(overview: ScanResult['impact'] | undefined, items: StartupItem[]): string[] {
+  const out: string[] = []
+  out.push('## 启动影响（Windows 自己实测的单项开销）')
+  out.push('')
+
+  if (!overview || overview.unavailableReason) {
+    out.push(
+      `- **本次未取得** ${overview?.unavailableReason ? `—— ${overview.unavailableReason}` : ''}`.trimEnd(),
+    )
+    out.push('')
+    out.push('这**不影响**上面任何一条判断：它只是少了一栏参考数据。')
+    out.push('')
+    return out
+  }
+
+  const rows = items
+    .filter((it) => it.timing.impact)
+    .sort((a, b) => {
+      const ia = a.timing.impact!
+      const ib = b.timing.impact!
+      return ib.cpuMs + ib.diskBytes / 1024 - (ia.cpuMs + ia.diskBytes / 1024)
+    })
+
+  out.push(
+    `- 覆盖范围：登录后 ${overview.windowMs ? fmtMs(overview.windowMs) : '一段窗口'} 内的进程，` +
+      `共 ${overview.recordCount} 条记录，其中 ${rows.length} 项对应上了启动项`,
+  )
+  if (overview.sourceFile) {
+    const who = overview.isCurrentUser
+      ? '当前登录账户'
+      : `**另一个账户**（${overview.sourceSid ?? '未知'}）`
+    out.push(`- 数据来源：\`${overview.sourceFile}\`（${who}的那次登录）`)
+  }
+  if (overview.isCurrentUser === false) {
+    out.push('')
+    out.push('> ⚠️ 上面这份记录来自**另一个账户**的登录会话，不代表当前用户的开机情况。')
+  }
+  out.push('')
+  out.push(
+    '> ⚠️ 这一栏量的是**资源占用**，不是"让开机慢了几秒"。CPU 时间跨核累加，' +
+      '一个多线程程序的时间可以超过窗口本身的长度。档位（高/中/低）用的是与' +
+      '任务管理器完全相同的阈值，可以逐条对照。',
+  )
+  out.push('')
+
+  if (rows.length === 0) {
+    out.push('_没有一项能与这份记录对应上。_')
+    out.push('')
+    return out
+  }
+
+  out.push('| 启动项 | 启动影响 | CPU 时间 | 磁盘读写 | 出现于 |')
+  out.push('| --- | :---: | ---: | ---: | ---: |')
+  for (const it of rows) {
+    const im = it.timing.impact!
+    const label = { low: '低', medium: '中', high: '**高**' }[im.level]
+    const at = im.startedInTraceMs === undefined ? '—' : fmtMs(im.startedInTraceMs)
+    const many = im.processCount > 1 ? `（${im.processCount} 个进程合计）` : ''
+    out.push(
+      `| ${mdCell(displayNameOf(it))} | ${label} | ${fmtMs(im.cpuMs)}${many} | ` +
+        `${fmtBytes(im.diskBytes)} | ${at} |`,
+    )
+  }
+  out.push('')
+  return out
+}
+
 export function toMarkdown(result: ScanResult): string {
-  const { items, os, scannedAt, elevated, bootTimeline } = result
+  const { items, os, scannedAt, elevated, bootTimeline, observation, impact } = result
   const tally = tallyAttention(items)
   const risky = items.filter(isProblem)
   const cleanable = items.filter(isCleanable)
@@ -154,6 +309,8 @@ export function toMarkdown(result: ScanResult): string {
     out.push('- 本次开机耗时：系统还没有记录开机性能数据')
   }
   out.push('')
+  out.push(...observationLines(observation, items))
+  out.push(...impactLines(impact, items))
 
   /* ——— 需要关注的项 ——— */
   out.push('## 需要你关注的项')
@@ -166,6 +323,8 @@ export function toMarkdown(result: ScanResult): string {
       out.push(`- 状态：${VALIDITY_META[it.validity].label}`)
       out.push(`- 程序位置：\`${it.resolvedPath || it.command}\``)
       out.push(`- 启动时机：${PHASE_LABEL[it.bootPhase]} · 耗时：${timingText(it)}`)
+      const imp = impactText(it)
+      if (imp) out.push(`- 启动影响：${imp}　（Windows 自记，与任务管理器同一口径）`)
       if (it.recommendation) {
         out.push(`- 建议：**${ADVICE_META[it.recommendation.action].label}** —— ${it.recommendation.reason}`)
       }
@@ -271,6 +430,11 @@ export function toMarkdown(result: ScanResult): string {
   out.push('- 标「实测」的耗时来自系统事件日志，是这台电脑上一次开机的真实记录。')
   out.push('- 标「估算」的只表示"大约在这个阶段启动"，**不给出时长**——系统没测过的东西，我们不会编一个数字出来。')
   out.push('- 标「未记录」的表示系统没有关于它的任何耗时数据。')
+  out.push(
+    '- 「开机后出现时刻」「启动影响」「耗时」是**三个不同的量**，分别回答"什么时候出现"、' +
+      '"占了多少资源"、"花了多久"。它们来自三条互不相干的通路，一个项可能只有其中一项，' +
+      '也可能三项都有——**任何情况下都不会把它们合成一个数字**。',
+  )
   out.push(`- 本次共 ${items.filter(needsAttention).length} 项被标记为需要关注；其余项没有发现异常。`)
   out.push('')
   if (result.errors.length > 0) {

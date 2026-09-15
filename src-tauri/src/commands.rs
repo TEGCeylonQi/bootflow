@@ -182,6 +182,45 @@ pub async fn enable_boot_record() -> Result<()> {
     spawn_blocking_result(crate::diag::boot_record::enable).await
 }
 
+/// 读用户设置。读不出来时返回默认值（自记账**关闭**），而不是报错——
+/// 设置页需要的是一个确定的状态，不是"读不到所以显示不出来"。
+#[tauri::command]
+pub async fn get_settings() -> crate::settings::Settings {
+    tauri::async_runtime::spawn_blocking(crate::settings::load)
+        .await
+        .unwrap_or_default()
+}
+
+/// 打开 / 关闭「每次开机自记账」。
+///
+/// 这是本项目里少数几个**会往用户系统里放东西**的操作（默认关闭的自启条目），
+/// 所以两条路都必须处理干净：
+/// - 打开 → 注册自启条目（幂等；提权走计划任务，否则写 `HKCU\Run`）
+/// - 关闭 → 把**两个**历史入口一起清掉，不留残骸
+///
+/// 只有在系统层面确实生效之后才落盘设置值。反过来（先存设置再改系统）会出现
+/// "设置说开着、系统里没有"的状态，而界面正是读设置来显示的。
+#[tauri::command]
+pub async fn set_boot_recording(enabled: bool) -> Result<crate::settings::Settings> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if enabled {
+            crate::diag::boot_marker::ensure_autostart()
+                .map_err(AppError::Other)?;
+        } else {
+            crate::diag::boot_marker::remove_autostart().map_err(AppError::Other)?;
+        }
+
+        let s = crate::settings::Settings {
+            schema_version: crate::settings::SETTINGS_SCHEMA_VERSION,
+            boot_recording: enabled,
+        };
+        crate::settings::save(&s)?;
+        Ok(s)
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("切换自记账开关的任务异常终止：{e}")))?
+}
+
 /// 下载并拉起安装包（更新流程）。
 ///
 /// `url` 必须是检查更新返回的资产下载地址。后端会做两层校验：
@@ -298,37 +337,50 @@ pub struct DryRunOutcome {
 /// 干跑：把若干 `EditInput` 编译成动作清单（**不写系统**）。
 #[tauri::command]
 pub async fn dry_run_edits(items: Vec<StartupItem>, edits: Vec<EditInput>) -> Result<DryRunOutcome> {
-    spawn_blocking_result(move || {
-        let mut steps = Vec::new();
-        let mut denied = Vec::new();
-        let mut noop = true;
+    spawn_blocking_result(move || dry_run_sync(items, edits)).await
+}
 
-        for edit in &edits {
-            let Some(item) = items.iter().find(|i| i.id == edit.item_id) else {
-                denied.push(format!("找不到 id={} 的启动项（可能已移除，请重新扫描）", edit.item_id));
-                continue;
-            };
-            // 护栏：Locked 项连预演都不进入
-            let gate = guard::check(item);
-            if !gate.is_allowed() {
-                denied.push(format!(
-                    "「{}」{}",
-                    item.display_name.as_deref().unwrap_or(&item.name),
-                    guard::denial_message(&gate)
-                ));
-                continue;
-            }
-            let one = plan::plan_one(item, &edit.to_plan());
-            if one.is_empty() {
-                noop = true; // 其中一项无事可做（已处于目标态）
-            }
-            steps.extend(one);
+/// `dry_run_edits` 的同步实现（可脱离 Tauri 直接测试）。
+///
+/// `noop` 的语义是「这一批请求没有任何可执行的动作」——即既没有步骤、
+/// 也没有被拒项（被拒项自带说明，不算"没事发生"）。它由**最终结果**导出，
+/// 不由循环中途的某个分支标记：早先写成循环里的 `noop = true`，
+/// 结果是这个字段恒为 true，预演面板会在给出 N 条待执行动作的同时
+/// 又印上「没有任何实际变更」——在最需要说清楚的那一刻自相矛盾。
+/// 前端 mock（`api/commands.ts`）一直按正确口径算，所以这个错**只在真实
+/// 后端下出现**，页面自检永远看不到。改成末尾统一导出，并加断言锁住。
+pub fn dry_run_sync(items: Vec<StartupItem>, edits: Vec<EditInput>) -> Result<DryRunOutcome> {
+    let mut steps = Vec::new();
+    let mut denied = Vec::new();
+
+    for edit in &edits {
+        let Some(item) = items.iter().find(|i| i.id == edit.item_id) else {
+            denied.push(format!(
+                "找不到 id={} 的启动项（可能已移除，请重新扫描）",
+                edit.item_id
+            ));
+            continue;
+        };
+        // 护栏：Locked 项连预演都不进入
+        let gate = guard::check(item);
+        if !gate.is_allowed() {
+            denied.push(format!(
+                "「{}」{}",
+                item.display_name.as_deref().unwrap_or(&item.name),
+                guard::denial_message(&gate)
+            ));
+            continue;
         }
+        // 无事可做的项（已处于目标态）自然产不出步骤，不必单独标记。
+        steps.extend(plan::plan_one(item, &edit.to_plan()));
+    }
 
-        Ok(DryRunOutcome { steps, denied, noop })
+    let noop = steps.is_empty() && denied.is_empty();
+    Ok(DryRunOutcome {
+        steps,
+        denied,
+        noop,
     })
-    .await
-    .map_err(|e| AppError::Other(format!("预演任务异常终止：{e}")))
 }
 
 /// 应用一批编辑（单改 / 批改共用）。
@@ -972,5 +1024,66 @@ mod tests {
         }];
         let err = apply_edits_sync(items, edits).unwrap_err();
         assert!(err.to_string().contains("没有可应用"), "全 noop 应报错：{err}");
+    }
+
+    /// 预演产出步骤时 `noop` **必须**为 false。
+    ///
+    /// 锁住这条是因为早先的实现把 `noop` 写成了「循环里置 true、从不置 false」，
+    /// 于是它恒为 true：预演面板会一边列出 N 条待执行动作、一边印上
+    /// 「没有任何实际变更（目标状态与现状一致）」。前端 mock 按正确口径算，
+    /// 所以浏览器自检永远发现不了——只有真实后端才会露出来。
+    #[test]
+    fn dry_run_has_steps_then_it_is_not_noop() {
+        let items = vec![item("a", true)];
+        let edits = vec![EditInput {
+            item_id: "a".into(),
+            enabled: Some(false),
+            start_type: None,
+            task_enabled: None,
+            trigger_enabled: None,
+        }];
+        let out = dry_run_sync(items, edits).expect("预演不该失败");
+        assert_eq!(out.steps.len(), 1, "停用一个已启用的项应产出 1 条动作");
+        assert!(
+            !out.noop,
+            "有 {} 条待执行动作时 noop 不能是 true（面板会自相矛盾）",
+            out.steps.len()
+        );
+    }
+
+    /// 请求已处于目标态（无事可做）时才是 `noop`。
+    #[test]
+    fn dry_run_is_noop_only_when_nothing_to_do() {
+        // 已启用，却要求「启用」→ 无动作
+        let items = vec![item("a", true)];
+        let edits = vec![EditInput {
+            item_id: "a".into(),
+            enabled: Some(true),
+            start_type: None,
+            task_enabled: None,
+            trigger_enabled: None,
+        }];
+        let out = dry_run_sync(items, edits).expect("预演不该失败");
+        assert!(out.steps.is_empty());
+        assert!(out.noop, "目标态与现状一致时应标为无事可做");
+    }
+
+    /// 全被护栏拒绝时不算 `noop` —— 「被拒绝」本身就是要说给用户的事，
+    /// 不能同时又说「没有任何实际变更」，那会让用户以为是白点了一下。
+    #[test]
+    fn dry_run_with_only_denied_items_is_not_noop() {
+        let mut it = item("sys", true);
+        it.risk = crate::model::RiskLevel::Locked;
+        let edits = vec![EditInput {
+            item_id: "sys".into(),
+            enabled: Some(false),
+            start_type: None,
+            task_enabled: None,
+            trigger_enabled: None,
+        }];
+        let out = dry_run_sync(vec![it], edits).expect("预演不该失败");
+        assert!(out.steps.is_empty(), "Locked 项不该产出动作");
+        assert_eq!(out.denied.len(), 1, "Locked 项应出现在拒绝列表里");
+        assert!(!out.noop, "有被拒项时不能说『没有任何实际变更』");
     }
 }

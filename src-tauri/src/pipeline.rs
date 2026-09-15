@@ -12,7 +12,7 @@
 //!      ↓ ② 统一类型判定                 （依赖签名信息，必须在有效性之前）
 //!      ↓ ③ 有效性检测                   （判断目标是否还在）
 //!      ↓ ④ 跨来源去重                   （依赖 ③ 的结论：坏项不参与）
-//!      ↓ ⑤ 开机耗时注入                 （实测/估算，产生 SLOW_START 诊断）
+//!      ↓ ⑤ 开机开销归因                 （实测耗时 / 进程观测 / 相位估算）
 //!      ↓ ⑥ 风险评级                     （读全部诊断，必须在 ⑤ 之后）
 //!      ↓ ⑦ 生成处置建议                 （读 ②③④⑥ 的结论，必须在 ⑥ 之后）
 //! ```
@@ -43,8 +43,12 @@ pub struct PipelineStats {
     pub advised: usize,
     /// 被评到 Locked（禁改区）的项数
     pub locked: usize,
-    /// 拿到了实测耗时的项数
+    /// 拿到了**单项实测耗时**的项数（系统只对判慢的项记录耗时，通常很少）
     pub measured: usize,
+    /// 被内核的进程创建时刻观测到的项数（"开机后第几秒出现"）
+    pub observed: usize,
+    /// 拿到了**Windows 自记的启动影响**的项数（WDI StartupInfo）
+    pub impacted: usize,
 }
 
 /// 就地补全所有派生字段。
@@ -55,7 +59,18 @@ pub struct PipelineStats {
 /// `timeline` 由调用方先读好再传进来，而不是在这里读——读事件日志需要
 /// 提权、可能失败、有明确的"读不到"语义，这些属于调用方的职责。
 /// 管线只负责"拿到时间轴之后该做什么"。
-pub fn finalize(items: &mut [StartupItem], timeline: &BootTimeline) -> PipelineStats {
+///
+/// `snapshot` 是开机时刻的**进程采样**（创建时刻 + 累计读盘/CPU）。
+/// 它和 `timeline` 是两条独立通路：时间轴要提权、还常常整条没有数据；
+/// 进程采样不需要任何权限、每次开机都拿得到。所以**即使时间轴完全读不到**，
+/// 单项的"开机后第几秒出现"依然能算出来——这正是"拆到单项"的落点。
+pub fn finalize(
+    items: &mut [StartupItem],
+    timeline: &BootTimeline,
+    snapshot: &crate::diag::proc_snapshot::Snapshot,
+    startup_info: &crate::diag::startup_info::StartupInfoReport,
+    impact_overview: &mut crate::model::ImpactOverview,
+) -> PipelineStats {
     let mut stats = PipelineStats {
         total: items.len(),
         ..Default::default()
@@ -118,9 +133,16 @@ pub fn finalize(items: &mut [StartupItem], timeline: &BootTimeline) -> PipelineS
     // ④ 跨来源去重（内部会跳过坏项）
     stats.duplicates = dedupe::mark_duplicates(items);
 
-    // ⑤ 开机耗时：实测的挂 SLOW_START，其余给估算起点，并更新 boot_phase 之外的 timing。
+    // ⑤ 开机开销归因：实测耗时 → 进程观测 → 相位估算，三档如实标注。
     //    这一步只读 source/name/resolved_path/boot_phase，都是扫描器给的原始信息。
-    diag::timeline::apply_to_items(items, timeline);
+    diag::item_cost::attribute(items, timeline, snapshot);
+
+    // ⑤b 「启动影响」归因 —— 独立一条轴，必须排在 ⑤ 之后
+    //
+    // 排后面的原因：⑤ 内部会整体替换 `item.timing`（`ItemTiming { ..default() }`），
+    // 先写的 impact 会被抹掉。（`attribute` 里也做了保存/恢复，两道保险。）
+    // 走的是 WDI 那份数据，失败方式与 ⑤ 互不相干，所以单独计数、单独上报。
+    diag::item_cost::attribute_impact(items, startup_info, impact_overview);
 
     // ⑥ 风险评级 —— 读 ⑤ 注入的诊断，所以必须在它之后
     for it in items.iter_mut() {
@@ -132,8 +154,13 @@ pub fn finalize(items: &mut [StartupItem], timeline: &BootTimeline) -> PipelineS
         if level == crate::model::RiskLevel::Locked {
             stats.locked += 1;
         }
-        if it.timing.confidence == crate::model::Confidence::Measured {
-            stats.measured += 1;
+        match it.timing.confidence {
+            crate::model::Confidence::Measured => stats.measured += 1,
+            crate::model::Confidence::Observed => stats.observed += 1,
+            _ => {}
+        }
+        if it.timing.impact.is_some() {
+            stats.impacted += 1;
         }
     }
 
@@ -172,6 +199,7 @@ fn source_key(s: crate::model::SourceKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::diag::proc_snapshot::Snapshot;
     use crate::model::*;
 
     fn item(name: &str, path: &str) -> StartupItem {
@@ -213,7 +241,13 @@ mod tests {
         let dead = "D:\\__bootflow_nonexistent__\\x.exe";
         let mut items = vec![item("a", dead), item("b", dead)];
 
-        let stats = finalize(&mut items, &BootTimeline::default());
+        let stats = finalize(
+            &mut items,
+            &BootTimeline::default(),
+            &Snapshot::default(),
+            &crate::diag::startup_info::StartupInfoReport::default(),
+            &mut crate::model::ImpactOverview::default(),
+        );
 
         assert_eq!(stats.total, 2);
         assert!(items.iter().all(|i| !i.id.is_empty()), "id 应被派生");
@@ -229,8 +263,20 @@ mod tests {
         let dead = "D:\\__bootflow_nonexistent__\\y.exe";
         let mut a = vec![item("a", dead)];
         let mut b = vec![item("a", dead)];
-        finalize(&mut a, &BootTimeline::default());
-        finalize(&mut b, &BootTimeline::default());
+        finalize(
+            &mut a,
+            &BootTimeline::default(),
+            &Snapshot::default(),
+            &crate::diag::startup_info::StartupInfoReport::default(),
+            &mut crate::model::ImpactOverview::default(),
+        );
+        finalize(
+            &mut b,
+            &BootTimeline::default(),
+            &Snapshot::default(),
+            &crate::diag::startup_info::StartupInfoReport::default(),
+            &mut crate::model::ImpactOverview::default(),
+        );
         assert_eq!(a[0].id, b[0].id, "同一台机器反复扫描，id 必须稳定");
     }
 
@@ -238,7 +284,13 @@ mod tests {
     fn finalize_derives_kind_from_source() {
         let mut items = vec![item("a", "D:\\__bootflow_nonexistent__\\z.exe")];
         items[0].source = SourceKind::Service;
-        finalize(&mut items, &BootTimeline::default());
+        finalize(
+            &mut items,
+            &BootTimeline::default(),
+            &Snapshot::default(),
+            &crate::diag::startup_info::StartupInfoReport::default(),
+            &mut crate::model::ImpactOverview::default(),
+        );
         assert_eq!(
             items[0].kind,
             ItemKind::Service,

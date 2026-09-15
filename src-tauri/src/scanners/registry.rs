@@ -644,7 +644,15 @@ mod tests {
         // 关键：这里跑**完整管线**而不只是 collect()。
         // 去重（哪些被判重复、代表项是谁）和建议（给什么动作、什么措辞）
         // 都发生在管线里，只跑 collect 看不到，也就验证不了。
-        let stats = crate::pipeline::finalize(&mut items, &crate::model::BootTimeline::default());
+        let stats = crate::pipeline::finalize(
+            &mut items,
+            &crate::model::BootTimeline::default(),
+            &crate::diag::proc_snapshot::Snapshot::default(),
+            // 这条测试只关心 Run 键的解析链，不引入 WDI 那条需要提权、
+            // 且随机器变化的数据通路——否则它会变成一条看天吃饭的测试。
+            &crate::diag::startup_info::StartupInfoReport::default(),
+            &mut crate::model::ImpactOverview::default(),
+        );
 
         println!(
             "\nRun / RunOnce 共 {} 项；失效 {}，重复 {}，给出建议 {}",

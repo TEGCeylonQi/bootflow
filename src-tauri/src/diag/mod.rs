@@ -15,7 +15,10 @@
 //! | `known` | 「本该是什么样」的参照表（白名单） |
 //! | `boot_log` | 从事件日志读开机耗时原始数据 |
 //! | `boot_record` | 「开机记录」开关的探测与一键开启（唯一写系统策略的模块） |
-//! | `timeline` | 把事件数据拼成相位时间轴，并把慢服务对应到启动项 |
+//! | `proc_snapshot` | 进程级实测采样：创建时刻 + 累计读盘/CPU |
+//! | `startup_info` | Windows 自记的单项启动开销（WDI）：CPU 时间 + 磁盘 IO |
+//! | `timeline` | 把事件数据拼成相位时间轴 |
+//! | `item_cost` | 把「实测耗时 / 启动影响 / 进程观测 / 相位」归因到具体启动项 |
 //! | `risk` | 三层风险评级 |
 //!
 //! ## 两条贯穿全层的原则
@@ -34,6 +37,9 @@ pub mod boot_marker;
 pub mod boot_record;
 pub mod boot_verdict;
 pub mod codes;
+pub mod item_cost;
 pub mod known;
+pub mod proc_snapshot;
 pub mod risk;
+pub mod startup_info;
 pub mod timeline;

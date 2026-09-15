@@ -136,7 +136,17 @@ const RAW_ITEMS: RawItem[] = [
       },
     ],
     bootPhase: 'userInit',
-    timing: { confidence: 'measured', durationMs: 8420, sourceEventId: 103 },
+    // 耗时（事件 103）与出现时刻（进程采样）是**两条独立通路**，可以同时有：
+    // 于是这一项在时间轴上既能定位、又有真实长度。
+    timing: {
+      confidence: 'measured',
+      durationMs: 8420,
+      sourceEventId: 103,
+      observedStartMs: 25130,
+      readBytes: 31457280,
+      observedAtMs: 42600,
+      impact: { cpuMs: 1402, diskBytes: 8388608, level: 'high', startedInTraceMs: 25130, processCount: 2 },
+    },
     raw: { startType: 3, delayed: false },
     desired: {},
   },
@@ -170,7 +180,15 @@ const RAW_ITEMS: RawItem[] = [
       },
     ],
     bootPhase: 'userInit',
-    timing: { confidence: 'measured', durationMs: 3180, sourceEventId: 103 },
+    timing: {
+      confidence: 'measured',
+      durationMs: 3180,
+      sourceEventId: 103,
+      observedStartMs: 26820,
+      readBytes: 12582912,
+      observedAtMs: 42600,
+      impact: { cpuMs: 320, diskBytes: 512000, level: 'medium', startedInTraceMs: 26820, processCount: 1 },
+    },
     raw: { startType: 2, delayed: false },
     desired: {},
   },
@@ -286,7 +304,7 @@ const RAW_ITEMS: RawItem[] = [
     riskReasons: [],
     diagnostics: [],
     bootPhase: 'logon',
-    timing: { confidence: 'estimated', startEstimateMs: 20000 },
+    timing: { confidence: 'observed', observedStartMs: 22430, readBytes: 16777216, observedAtMs: 42600 },
     raw: { triggerTypes: ['LogonTrigger'] },
     desired: {},
   },
@@ -316,7 +334,21 @@ const RAW_ITEMS: RawItem[] = [
       },
     ],
     bootPhase: 'shell',
-    timing: { confidence: 'estimated', startEstimateMs: 21000 },
+    // 出现时刻与启动影响是**两条轴**：这一项在时间轴上排得很靠前（21.6s），
+    // 但它同时也是全场最重的那个——把两者合成一个数字就两头都说不清。
+    timing: {
+      confidence: 'observed',
+      observedStartMs: 21640,
+      readBytes: 58720256,
+      observedAtMs: 42600,
+      impact: {
+        cpuMs: 2180,
+        diskBytes: 73400320,
+        level: 'high',
+        startedInTraceMs: 21640,
+        processCount: 1,
+      },
+    },
     raw: { isShortcut: true, elevated: false },
     desired: {},
   },
@@ -350,7 +382,7 @@ const RAW_ITEMS: RawItem[] = [
       },
     ],
     bootPhase: 'logon',
-    timing: { confidence: 'estimated', startEstimateMs: 16800 },
+    timing: { confidence: 'observed', observedStartMs: 24810, readBytes: 40265318, observedAtMs: 42600 },
     raw: { hive: 'HKCU', valueType: 'REG_SZ' },
     desired: {},
   },
@@ -376,7 +408,7 @@ const RAW_ITEMS: RawItem[] = [
       },
     ],
     bootPhase: 'logon',
-    timing: { confidence: 'estimated', startEstimateMs: 17200 },
+    timing: { confidence: 'observed', observedStartMs: 19420, readBytes: 4194304, observedAtMs: 42600 },
     raw: { hive: 'HKCU', valueType: 'REG_SZ' },
     desired: {},
   },
@@ -396,7 +428,7 @@ const RAW_ITEMS: RawItem[] = [
     riskReasons: ['占用内存与网络，登录后非必需'],
     diagnostics: [],
     bootPhase: 'logon',
-    timing: { confidence: 'estimated', startEstimateMs: 19000 },
+    timing: { confidence: 'observed', observedStartMs: 31240, readBytes: 12582912, observedAtMs: 42600 },
     raw: { hive: 'HKCU', valueType: 'REG_SZ' },
     desired: {},
   },
@@ -436,10 +468,17 @@ const RAW_ITEMS: RawItem[] = [
     riskReasons: [],
     diagnostics: [],
     bootPhase: 'logon',
-    timing: { confidence: 'estimated', startEstimateMs: 19800 },
+    timing: { confidence: 'observed', observedStartMs: 26180, readBytes: 21708800, observedAtMs: 42600 },
     raw: { hive: 'HKCU', valueType: 'REG_SZ' },
     desired: {},
   },
+
+  // 下面两项刻意指向**同一个** exe，用来演示一条容易做错的归因规则：
+  // 一个可执行文件被多个启动项声明时，**不能**拿那个进程的创建时刻当成
+  // 其中任何一项的启动时刻——`svchost.exe` 承载几十个服务就是这个形状。
+  // 所以后端（`item_cost::exclusive_exe_owners`）会给它们退到 estimated，
+  // 这里的 `timing` 必须与之一致，否则界面演示的是一个真实运行时
+  // 永远不会出现的状态。
   {
     id: 'run-localsend',
     source: 'RunUser',
@@ -562,7 +601,7 @@ const RAW_ITEMS: RawItem[] = [
     riskReasons: [],
     diagnostics: [],
     bootPhase: 'logon',
-    timing: { confidence: 'estimated', startEstimateMs: 21300 },
+    timing: { confidence: 'observed', observedStartMs: 28740, readBytes: 33554432, observedAtMs: 42600 },
     raw: { hive: 'HKCU', valueType: 'REG_SZ' },
     desired: {},
   },
@@ -628,7 +667,7 @@ const RAW_ITEMS: RawItem[] = [
     riskReasons: [],
     diagnostics: [],
     bootPhase: 'logon',
-    timing: { confidence: 'estimated', startEstimateMs: 22200 },
+    timing: { confidence: 'observed', observedStartMs: 35120, readBytes: 44040192, observedAtMs: 42600 },
     raw: { hive: 'HKCU', valueType: 'REG_SZ' },
     desired: {},
   },
@@ -842,6 +881,37 @@ export const MOCK_SCAN_RESULT: ScanResult = {
   os: { major: 10, minor: 0, build: 22631, sku: 'Windows 11 Pro' },
   elevated: false,
   scannedAt: new Date().toISOString(),
+  /**
+   * 进程采样概况。这些数字必须与本文件里各 `timing` 自洽：
+   * 采样拍在开机后 42.6 秒，窗口内 138 个进程，其中 10 项对上了启动项。
+   * 采样与事件日志是**两条独立通路**——下面这个 `bootTimeline` 要提权才有，
+   * 采样在任何权限下都有，所以「读不到系统日志」时它仍然在。
+   */
+  observation: {
+    capturedAtOffsetMs: 42600,
+    processCount: 138,
+    observedCount: 10,
+  },
+  /**
+   * 启动影响概况。
+   *
+   * ⚠️ 这份 fixture 是"数据齐全"的演示形态，所以 `elevated` 那个字段
+   * 在这里不构成矛盾——真实机器上这条通路需要提权，而本文件里
+   * `elevated: false` 只影响顶栏徽标的展示。要复现"读不到"的分支，
+   * 用 `MOCK_SCAN_RESULT_TIMELINE_DENIED`（那份把两条需要提权的通路一起关掉，
+   * 因为真实机器上非提权运行时它们确实是一起失败的）。
+   *
+   * 数字与本文件里各项的 `timing.impact` 自洽：窗口 90 秒、26 条进程记录、
+   * 其中 3 项对上启动项。
+   */
+  impact: {
+    windowMs: 90000,
+    recordCount: 26,
+    matchedCount: 3,
+    sourceSid: 'S-1-5-21-1004336348-1177238915-682003330-1001',
+    isCurrentUser: true,
+    sourceFile: 'S-1-5-21-1004336348-1177238915-682003330-1001_StartupInfo3.xml',
+  },
   bootTimeline: {
     totalBootMs: 31800,
     phases: [
@@ -901,6 +971,21 @@ export const MOCK_SCAN_RESULT_TIMELINE_DENIED: ScanResult = {
     needsElevation: true,
     unavailableReason:
       '读取开机性能日志需要管理员权限。系统默认没有向普通用户开放这个日志，所以这次没能读到耗时数据。',
+  },
+  /**
+   * 「读不到」的分支要把**两条需要提权的通路**一起关掉。
+   *
+   * 只关掉一条会造出一台不存在的机器：真实的非提权运行下，
+   * 系统事件日志和 WDI 目录是**一起**被拒的（两者都只对管理员开放）。
+   * 如果只关一条，另一条的"读不到"界面就永远没人走到，
+   * 而那恰好是最容易被写成"显示一个空图"的地方。
+   */
+  impact: {
+    recordCount: 0,
+    matchedCount: 0,
+    isCurrentUser: false,
+    unavailableReason:
+      '读取这份数据需要管理员权限，当前以普通权限运行。它不影响上面任何一条启动项的判断。',
   },
 }
 

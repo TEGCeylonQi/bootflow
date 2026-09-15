@@ -1,5 +1,6 @@
 import type {
   BootPhase,
+  ImpactLevel,
   ItemKind,
   RecommendationAction,
   RiskLevel,
@@ -104,9 +105,34 @@ export const PHASE_ORDER: BootPhase[] = [
 ]
 
 export const CONFIDENCE_LABEL: Record<string, string> = {
-  measured: '实测',
+  measured: '实测耗时',
+  /**
+   * 「实测出现时刻」——它和 `measured` 都是硬数据，量到的却不是同一个东西：
+   * 这一档只知道"什么时候出现"，**不知道花了多久**。所以标签里必须带"时刻"，
+   * 只写"实测"会让人把它读成耗时。
+   */
+  observed: '实测出现时刻',
   estimated: '估算',
   none: '未知',
+}
+
+/**
+ * 「启动影响」三档的用户措辞 —— **与任务管理器用同一套词**。
+ *
+ * 刻意不写成"严重/中等/轻微"之类：任务管理器里写的是"高/中/低"，
+ * 换一套词就等于逼用户在两处之间做翻译，而"能逐条对照"正是这份数据的价值。
+ */
+export const IMPACT_LABEL: Record<ImpactLevel, string> = {
+  low: '低',
+  medium: '中',
+  high: '高',
+}
+
+/** 三档的状态色。复用既有的 ok / warn / danger 三色，不新造颜色。 */
+export const IMPACT_COLOR: Record<ImpactLevel, string> = {
+  low: '#3fb950',
+  medium: '#d29922',
+  high: '#f85149',
 }
 
 /** 甘特图与图例共用的相位配色：蓝 → 橙 表达时间推进 */

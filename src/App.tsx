@@ -45,6 +45,7 @@ const UPDATE_CHECK_DELAY_MS = 3000
  */
 export default function App() {
   const scan = useAppStore((s) => s.scan)
+  const loadSettings = useAppStore((s) => s.loadSettings)
   const sidebarWidth = useAppStore((s) => s.sidebarWidth)
   const propertyWidth = useAppStore((s) => s.propertyWidth)
   const setPaneWidth = useAppStore((s) => s.setPaneWidth)
@@ -59,7 +60,10 @@ export default function App() {
     if (booted.current) return
     booted.current = true
     void scan()
-  }, [scan])
+    // 设置与扫描并行读：它是本地一个小 JSON，且**与扫描结果无关**。
+    // 放在 `scan()` 里会让"重扫"也重读设置，而设置只在用户改动时才变。
+    void loadSettings()
+  }, [scan, loadSettings])
 
   useEffect(() => {
     // 同上：开发模式下 effect 会跑两次，挡住重复的更新检查

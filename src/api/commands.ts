@@ -242,6 +242,39 @@ export async function enableBootRecord(): Promise<void> {
   return invokeSafe<void>('enable_boot_record')
 }
 
+/** 用户设置。目前只有「每次开机自记账」一项。 */
+export interface AppSettings {
+  schemaVersion: number
+  /** 默认 **false**：不注册任何自启条目 */
+  bootRecording: boolean
+}
+
+/**
+ * 读用户设置。
+ *
+ * 后端读不到文件／文件损坏时返回默认值（自记账关闭），所以这里不会失败——
+ * 设置页需要的是一个确定的状态，而不是"读不到所以显示不出来"。
+ */
+export async function getSettings(): Promise<AppSettings> {
+  if (!isTauri()) return { schemaVersion: 1, bootRecording: false }
+  return invokeSafe<AppSettings>('get_settings')
+}
+
+/**
+ * 打开 / 关闭「每次开机自记账」。
+ *
+ * 这是少数会**往用户系统里放东西**的操作（一个默认关闭的自启条目）。
+ * 后端只在系统层面确实改完之后才落盘设置值，所以返回的设置可以直接信任。
+ * 失败文案已是人话（如"注册开机自记账任务失败：拒绝访问"），直接展示即可。
+ */
+export async function setBootRecording(enabled: boolean): Promise<AppSettings> {
+  if (!isTauri()) {
+    // 浏览器开发模式下不真注册自启，只回一个自洽的状态
+    return { schemaVersion: 1, bootRecording: enabled }
+  }
+  return invokeSafe<AppSettings>('set_boot_recording', { enabled })
+}
+
 /**
  * 清理 `update-cache` 里上次下载残留的安装包，返回清理的文件数。
  *

@@ -10,9 +10,12 @@ import {
   probeBootRecord,
   enableBootRecord,
 } from '@/api/commands'
-import type { PhaseSpan } from '@/types/model'
+import type { PhaseSpan, StartupItem } from '@/types/model'
 import { BootDiagInline } from '@/components/Diagnose/BootDiag'
 import { BootSelfRecords } from './BootSelfRecords'
+import { ItemCostTimeline } from './ItemCostTimeline'
+import { ImpactPanel } from './ImpactPanel'
+import { BootRecordingToggle } from './BootRecordingToggle'
 
 const AXIS_TEXT = '#8b949e'
 const SPLIT_LINE = '#21262d'
@@ -90,7 +93,7 @@ function BootRecordGuide() {
           await enableBootRecord()
           setMsg(
             '已帮你恢复允许记录（系统策略会在 15 分钟后自动还原）。' +
-              '下次**完整重启**时就会写一次开机性能记录。注意：关机再开属于快速启动，不会触发记录。',
+              '下次「完整重启」时就会写一次开机性能记录。注意：关机再开属于快速启动，不会触发记录。',
           )
           setState('done')
         } catch (e) {
@@ -159,9 +162,25 @@ function withGaps(phases: PhaseSpan[]): PhaseSpan[] {
   return out
 }
 
-export function GanttView(_props: { items: unknown[] }) {
+/**
+ * 耗时分析。三个尺度自上而下：**各段耗时 → 每项在第几秒出现 → 最近几次开机的总时长**。
+ *
+ * 之所以要三个而不是一个，是因为它们来自**三条互不相干的通路**，
+ * 各有各的失败方式，谁都不能替谁兜底：
+ *
+ * | 通路 | 要权限？ | 要开关？ | 拿不到时 |
+ * |---|---|---|---|
+ * | 开机相位 / 慢项耗时 | 要管理员 | 否 | 只能给「读不到」+ 提权入口 |
+ * | 每项的出现时刻 | **不要** | 否 | 只可能是读不到本次开机起点 |
+ * | 自记账总时长 | 不要 | **要用户开** | 没开就一条都没有 |
+ *
+ * 把三者揉成一个数字或一张图，就必然要在某处编一点东西出来。
+ */
+export function GanttView({ items }: { items: StartupItem[] }) {
   const bootTimeline = useAppStore((s) => s.bootTimeline)
   const bootRecords = useAppStore((s) => s.bootRecords)
+  const observation = useAppStore((s) => s.observation)
+  const impact = useAppStore((s) => s.impact)
   const refreshTimeline = useAppStore((s) => s.refreshTimeline)
   const refreshBootRecords = useAppStore((s) => s.refreshBootRecords)
 
@@ -398,9 +417,19 @@ export function GanttView(_props: { items: unknown[] }) {
           </div>
         </div>
 
-        {/* 系统那条通路读不到，但自记账这条不用提权，这里往往已经有数据 */}
+        {/* 三条通路互相独立：系统分段（要提权）、自记账（要开关）、
+            进程采样（都不要）。所以下面两块即便在这个"读不到"分支里也照常有数据。 */}
+        <div style={{ marginTop: 8 }}>
+          <ItemCostTimeline items={items} observation={observation} />
+          <ImpactPanel items={items} overview={impact} />
+        </div>
+
         <div style={{ marginTop: 8 }}>
           <BootSelfRecords records={bootRecords} />
+        </div>
+
+        <div style={{ marginTop: 8 }}>
+          <BootRecordingToggle />
         </div>
 
         {/* 引导用户开启「每次开机都记录」 */}
@@ -443,16 +472,34 @@ export function GanttView(_props: { items: unknown[] }) {
           </div>
         </div>
 
+        {/* 进程采样这条通路：不需提权，所以这里**一定有**单项的出现时刻。
+            系统没写分段记录，不代表我们说不出"谁在第几秒被拉起"。 */}
+        <div style={{ marginTop: 8 }}>
+          <ItemCostTimeline items={items} observation={observation} />
+          <ImpactPanel items={items} overview={impact} />
+        </div>
+
         {/* 自记账这条通路：不需提权、快速启动下也照样记，所以这里通常有数据 */}
         <div style={{ marginTop: 8 }}>
           <BootSelfRecords records={bootRecords} />
         </div>
 
-        {/* 一条记录都还没有：说明还没在装好之后开过机。说清楚什么时候会开始有。 */}
+        <div style={{ marginTop: 8 }}>
+          <BootRecordingToggle />
+        </div>
+
+        {/* 一条记录都还没有。这里刻意**不**断言"已经登记为自启了"——
+            自记账是可选功能、默认关闭，所以"没有记录"完全可能只是因为还没打开它。 */}
         {!hasSelf && (
           <p className="mt-2 px-1 text-2xs leading-5 text-ink-dim">
-            BootFlow 已经登记为开机自启，<span className="text-ink">下次开机时就会自动记下第一条总时长</span>。
-            想同时看到系统给的分段耗时，请在下次用「重启」而不是「关机再开」。
+            还没有自记账记录。打开下面的
+            <span className="text-ink-muted">「每次开机记一条用时」</span>
+            （可选功能，默认关闭），它会在
+            <span className="text-ink">下次开机</span>时写下第一条。
+            <span className="text-ink-muted">
+              {' '}
+              若已经打开、开机几次后仍然没有，那说明登记没成功——把这条告诉我们即可。
+            </span>
           </p>
         )}
 
@@ -507,11 +554,22 @@ export function GanttView(_props: { items: unknown[] }) {
         下方是历史趋势：上面的图讲"这一次的各段耗时"，这里讲"最近几次的总时长"。
         只有一条时不画——一次数据没有趋势可言，只是重复上面已经说过的话。
       */}
+      {/* 从上往下是三个尺度：各段耗时（这里）→ 每一项在第几秒出现（下面）
+          → 最近几次开机的总时长（最下面）。尺度由大到小，读起来是一路下钻。 */}
+      <div style={{ marginTop: 10 }}>
+        <ItemCostTimeline items={items} observation={observation} />
+        <ImpactPanel items={items} overview={impact} />
+      </div>
+
       {bootRecords.length >= 2 && (
         <div style={{ marginTop: 10 }}>
           <BootSelfRecords records={bootRecords} />
         </div>
       )}
+
+      <div style={{ marginTop: 10 }}>
+        <BootRecordingToggle />
+      </div>
     </div>
   )
 }

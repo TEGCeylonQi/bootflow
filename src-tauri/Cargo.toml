@@ -55,6 +55,10 @@ windows = { version = "0.58", features = [
     "Win32_Networking_WinHttp",
     # GetTickCount64 —— 自记账：内核启动后走过的毫秒（T57）
     "Win32_System_SystemInformation",
+    # EnumProcesses —— 进程采样：拿"单项在开机后第几秒出现"（T58）
+    # 其余（OpenProcess / GetProcessTimes / GetProcessIoCounters /
+    # QueryFullProcessImageNameW）都在已启用的 Win32_System_Threading 下
+    "Win32_System_ProcessStatus",
 ] }
 
 [profile.release]

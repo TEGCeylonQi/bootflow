@@ -63,7 +63,21 @@ export type RiskLevel = 'Locked' | 'High' | 'Medium' | 'Safe'
  * estimated = 按启动相位推算，必须在界面上标注为估算
  * none = 信息不足，不参与甘特图绘制
  */
-export type Confidence = 'measured' | 'estimated' | 'none'
+/**
+ * 耗时数据的可信度 —— 「诚实原则」的代码化。
+ *
+ * 四档的区别**不是**"准不准"，而是"测到了什么"。Windows 只对少数被判慢的项
+ * 记录耗时，所以"有耗时"和"有实测"不是一回事；把两者混成一个档次，
+ * 就等于拿出现时刻冒充耗时。
+ */
+export type Confidence =
+  /** 实测耗时：系统事件日志留下的这一项耗时硬证据（Event 101/102/103） */
+  | 'measured'
+  /** 实测出现时刻：内核记录了进程创建时刻，但**没有**耗时 */
+  | 'observed'
+  /** 估算：按启动相位推算，界面必须标注且不给时长 */
+  | 'estimated'
+  | 'none'
 
 /** 开机阶段，用于甘特图背景相位带 */
 export type BootPhase =
@@ -141,13 +155,81 @@ export interface SignerInfo {
 
 export interface ItemTiming {
   confidence: Confidence
-  /** 相对开机起点的估算启动时刻，毫秒 */
+  /**
+   * 相对开机起点的**估算**启动时刻，毫秒。
+   *
+   * ⚠️ 只有 `estimated` 才用它，值是"它所属的开机相位从第几毫秒开始"。
+   * 同一相位里的所有项拿到的是**同一个**数字——这不是数据，是相位边界。
+   */
   startEstimateMs?: number
-  /** 该时长耗时，毫秒 */
+  /**
+   * 该时长耗时，毫秒。
+   *
+   * ⚠️ **只有 `measured` 才会填**。系统没记这项耗时就是没有，不换算、不补值。
+   */
   durationMs?: number
   /** 数据来源事件 ID，如 103 */
   sourceEventId?: number
+  /**
+   * **实测**：进程创建时刻相对本次开机起点的毫秒数（内核记录）。
+   *
+   * 这是"拆到单项"真正落地的地方。但它**不是耗时**——
+   * 界面措辞必须是「开机后第 N 秒出现」，不是「启动花了 N 秒」。
+   */
+  observedStartMs?: number
+  /**
+   * **实测**：快照那一刻，该进程**从启动至今**累计从磁盘读取的字节数。
+   *
+   * 必须与 `observedAtMs` 一起看：它不是"开机阶段读了这么多"。
+   */
+  readBytes?: number
+  /** 快照拍摄于开机后多久（毫秒）。用来界定上面那个累计值有多"新"。 */
+  observedAtMs?: number
+  /**
+   * **实测**：Windows 自己在登录窗口里量出来的资源消耗（WDI `StartupInfo`）。
+   *
+   * 与上面几项**并存**，不是替代关系。`undefined` = 这次没拿到它的记录。
+   */
+  impact?: ItemImpact
 }
+
+/**
+ * 单项「启动影响」—— **任务管理器「启动影响」列读的就是这份数据**。
+ *
+ * ⚠️ 它量的是**资源占用**，不是"让开机慢了几秒"。多线程程序的 CPU 时间
+ * 跨核累加，可以超过窗口本身的长度。所以这一档**从不与耗时混着算**，
+ * 界面上也必须单独一栏、单独措辞。
+ */
+export interface ItemImpact {
+  /** 窗口内消耗的 CPU 时间（毫秒）。⚠️ 跨核累加，不是墙钟耗时 */
+  cpuMs: number
+  /** 窗口内读写的磁盘字节数 */
+  diskBytes: number
+  /** 按微软阈值分出的档位 */
+  level: ImpactLevel
+  /** 它在跟踪窗口里的第几秒被拉起（Windows 记的） */
+  startedInTraceMs?: number
+  /** 对应上了几个进程实例。>1 时界面要说明这些数字是合计值 */
+  processCount: number
+}
+
+/**
+ * 清单排序方式。
+ *
+ * 刻意只有两种、而不是一个"综合分"：它们回答的是**两个不同的问题**——
+ * `default` 是"谁先跑起来"（时序），`impact` 是"谁最费资源"（开销）。
+ * 揉成一个分数就再也说不清某一项为什么排在前面。
+ */
+export type SortBy = 'default' | 'impact'
+
+/**
+ * 「启动影响」三档 —— 与任务管理器同一把尺子。
+ *
+ * 阈值不是我们定的，是微软公开口径（High = CPU > 1 秒或磁盘 > 3 MB；
+ * Medium = CPU ≥ 300 ms 或磁盘 ≥ 300 KB）。用户能打开任务管理器逐条对照，
+ * 两边档位不一致会立刻让整个软件不可信。
+ */
+export type ImpactLevel = 'low' | 'medium' | 'high'
 
 export interface DiagnosticInfo {
   /** 诊断码，如 SLOW_START / MANUAL_BUT_SHOULD_AUTO / UNSIGNED / GLOBAL_HOOK */
@@ -352,6 +434,57 @@ export interface ScanResult {
   /** ISO8601 */
   scannedAt: string
   bootTimeline: BootTimeline
+  /** 本次扫描时所做的**进程采样**概况 */
+  observation: ItemObservation
+  /** 本次扫描读到的**启动影响**数据概况 */
+  impact: ImpactOverview
   /** 各来源可容忍的部分失败，不阻断整体扫描 */
   errors: string[]
+}
+
+/**
+ * 一次 WDI `StartupInfo` 读取的概况。
+ *
+ * 与 `ItemObservation` 同样的理由单列出来：**"一项都没对上"和"没读到"
+ * 必须能分清**。前者是数据在、但启动项列表里没有匹配的映像；
+ * 后者是权限/版本/策略导致这份数据根本不存在——两者的处置完全不同。
+ */
+export interface ImpactOverview {
+  /** 跟踪窗口长度（毫秒）。所有 CPU / 磁盘数字都只覆盖这么长一段时间 */
+  windowMs?: number
+  /** 文件里一共多少条进程记录 */
+  recordCount: number
+  /** 其中成功对应到启动项的个数 */
+  matchedCount: number
+  /** 数据取自哪个账户的登录会话（SID） */
+  sourceSid?: string
+  /**
+   * 上面那个 SID 是不是当前登录用户。
+   *
+   * `false` 时界面**必须**说明"这是另一个账户那次登录的记录"——
+   * 把别人的登录数据当成自己的，比不给数据更糟。
+   */
+  isCurrentUser: boolean
+  /** 数据来自哪个文件。用户能自己去打开核对 */
+  sourceFile?: string
+  /** 不可用时的原因（人话） */
+  unavailableReason?: string
+}
+
+/**
+ * 一次开机进程采样的概况。
+ *
+ * 单列一个结构、而不是让界面从各项 `timing` 里自己汇总，是因为
+ * **一项都没匹配上时也必须能说清"为什么"**：空数组既可能是"采样失败"，
+ * 也可能是"采到了但没一项对得上"，两者处置完全不同。
+ */
+export interface ItemObservation {
+  /** 采样拍摄于开机后多久（毫秒）。缺省 = 采样不可用 */
+  capturedAtOffsetMs?: number
+  /** 采样窗口内一共多少个进程 */
+  processCount: number
+  /** 其中成功对应到启动项的个数 */
+  observedCount: number
+  /** 不可用时的原因（人话） */
+  unavailableReason?: string
 }

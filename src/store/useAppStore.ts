@@ -1,10 +1,23 @@
 import { create } from 'zustand'
-import type { BootRecord, BootTimeline, ItemKind, OsInfo, RiskLevel, StartupItem } from '@/types/model'
+import type { SortBy } from '@/types/model'
+import type {
+  BootRecord,
+  BootTimeline,
+  ImpactOverview,
+  ItemKind,
+  ItemObservation,
+  OsInfo,
+  RiskLevel,
+  StartupItem,
+} from '@/types/model'
 import {
   getBootRecords,
   getBootTimeline,
   getIcons,
+  getSettings,
   scanAll,
+  setBootRecording,
+  type AppSettings,
   type IconRequest,
 } from '@/api/commands'
 import { isSevere, isProblem, resolveKind } from '@/lib/item'
@@ -64,6 +77,27 @@ interface AppState {
    * 界面按「有分段用分段，没分段用总时长」的组合来展示。
    */
   bootRecords: BootRecord[]
+  /**
+   * 本次扫描时做的**进程采样**概况（拍摄时刻、进程数、命中启动项数）。
+   *
+   * 它和 `bootTimeline` 同样不是二选一：采样不要权限、每次都有，
+   * 事件日志要权限、常常没有。所以这个字段在"读不到系统日志"时依然有值，
+   * 单项的"开机后第几秒出现"就靠它。
+   */
+  observation: ItemObservation | null
+  /**
+   * 本次扫描读到的**启动影响**数据概况（WDI `StartupInfo`）。
+   *
+   * 这是第四条通路，和上面三条都不是二选一：它**要提权**（该目录对普通用户
+   * 连列目录都拒），换来的是唯一一份**由 Windows 亲自量出来的单项资源消耗**——
+   * 任务管理器「启动影响」列读的就是它。所以它自己也会"读不到"，
+   * 界面必须单独交代原因，而不是让它拖累另外三条。
+   */
+  impact: ImpactOverview | null
+  /** 用户设置。「每次开机自记账」默认关闭，由用户显式打开 */
+  settings: AppSettings | null
+  /** 正在切换自记账开关（界面据此禁用按钮，避免连点） */
+  settingsBusy: boolean
   /** 各来源可容忍的部分失败 */
   errors: string[]
   status: ScanStatus
@@ -72,6 +106,16 @@ interface AppState {
   // ——— 界面状态 ———
   selectedId: string | null
   query: string
+  /**
+   * 清单排序方式。
+   *
+   * `default` = 有问题的排前面，其余按实测出现时刻（原来的行为）。
+   * `impact`  = 按 Windows 自记的「启动影响」从重到轻——
+   *             回答的是另一个问题："谁最费资源"，而不是"谁先跑起来"。
+   *             这两个问题的答案经常不是同一批项，所以必须能切换，
+   *             而不是再拍一个"综合分"把它们揉在一起。
+   */
+  sortBy: SortBy
   /** 空数组代表「全选」。按类型筛选——「应用程序 / 后台服务」是用户能理解的维度 */
   kindFilter: ItemKind[]
   riskFilter: RiskLevel[]
@@ -128,8 +172,19 @@ interface AppState {
    * 提权后也不必重读它。分开的理由是失败域不同——一个失败不该牵连另一个。
    */
   refreshBootRecords: () => Promise<void>
+  /** 读一次用户设置。失败保留旧值（首次则为 null，界面按默认值展示）。 */
+  loadSettings: () => Promise<void>
+  /**
+   * 打开 / 关闭「每次开机自记账」。
+   *
+   * 这一项会往系统里加/删自启条目，所以状态的唯一来源是**后端返回值**
+   * （它只在系统层面确实改完之后才落盘设置），绝不在前端乐观更新——
+   * 乐观更新会出现"开关显示已打开、系统里其实没有"的最坏情形。
+   */
+  setBootRecording: (enabled: boolean) => Promise<void>
   select: (id: string | null) => void
   setQuery: (q: string) => void
+  setSortBy: (v: SortBy) => void
   toggleKind: (k: ItemKind) => void
   toggleRisk: (r: RiskLevel) => void
   setOnlyProblems: (v: boolean) => void
@@ -150,12 +205,17 @@ export const useAppStore = create<AppState>()((set, get) => ({
   scannedAt: null,
   bootTimeline: null,
   bootRecords: [],
+  observation: null,
+  impact: null,
+  settings: null,
+  settingsBusy: false,
   errors: [],
   status: 'idle',
   errorMsg: null,
 
   selectedId: null,
   query: '',
+  sortBy: 'default',
   kindFilter: [],
   riskFilter: [],
   onlyProblems: false,
@@ -182,6 +242,8 @@ export const useAppStore = create<AppState>()((set, get) => ({
         scannedAt: result.scannedAt,
         bootTimeline: result.bootTimeline,
         bootRecords: records,
+        observation: result.observation ?? null,
+        impact: result.impact ?? null,
         errors: result.errors,
         status: 'ready',
         // 首次扫描后自动定位到最严重的一项，让用户开屏就能看到诊断结论长什么样。
@@ -247,8 +309,30 @@ export const useAppStore = create<AppState>()((set, get) => ({
     }
   },
 
+  loadSettings: async () => {
+    try {
+      set({ settings: await getSettings() })
+    } catch (e) {
+      // 读不到就保持 null，界面按"自记账关闭"展示——那是后端定义的默认值，
+      // 而"读不到"绝不能被显示成"已经开着"
+      console.warn('[BootFlow] 读取设置失败，按默认值展示：', e)
+    }
+  },
+
+  setBootRecording: async (enabled) => {
+    set({ settingsBusy: true })
+    try {
+      // 只认后端返回值：它保证"系统里的状态已经改完"才落盘设置
+      const next = await setBootRecording(enabled)
+      set({ settings: next })
+    } finally {
+      set({ settingsBusy: false })
+    }
+  },
+
   select: (id) => set({ selectedId: id, anchorId: id }),
   setQuery: (q) => set({ query: q }),
+  setSortBy: (v) => set({ sortBy: v }),
 
   toggleKind: (k) =>
     set((st) => ({

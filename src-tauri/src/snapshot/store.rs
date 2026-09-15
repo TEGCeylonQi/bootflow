@@ -7,7 +7,7 @@
 //! 硬性要求：
 //! 1. **原子写** —— 先写临时文件再 `rename`，程序中断也不会留下半截 JSON。
 //! 2. **写完能读回** —— 保存后立即读回，与内存值逐字节比对（round-trip）。
-//! 3. **保留策略** —— 保留最近 N 份，旧快照按文件名（含时间前缀）清理。
+//! 3. **保留策略** —— 保留最近 N 份，旧快照按正文里的 `created_at` 清理。
 //! 4. **损坏/不兼容快照不致命** —— `load` 返回 `Err`，调用方按需忽略（扫描继续）。
 
 use std::fs;
@@ -88,21 +88,50 @@ pub fn load(id: &str) -> Result<Snapshot> {
     Ok(snap)
 }
 
-/// 列出全部快照 id（按文件修改时间倒序，新的在前）。
+/// 列出全部快照 id（按 `created_at` 倒序，新的在前）。
+///
+/// 判新旧**不能**看文件 mtime：Windows 上文件时间戳的精度约 15.6ms，
+/// 连续保存多份快照时（机器繁忙时更明显）它们的 mtime 会**完全相同**，
+/// 排序随之退化成目录枚举顺序——那是不确定的，保留策略会删错，
+/// 实测出现过「该删的没删、不该删的被删」。
+///
+/// 快照正文里的 `created_at` 是我们自己写进去的权威时间，始终可靠；
+/// 文件名是纯 UUID（哈希），本身不含任何时间信息，用不上。
 pub fn list() -> Result<Vec<String>> {
     let dir = snapshot_dir()?;
-    let mut entries: Vec<(String, std::time::SystemTime)> = Vec::new();
+    // (id, created_at, mtime 兜底)
+    let mut entries: Vec<(String, String, std::time::SystemTime)> = Vec::new();
     if let Ok(rd) = fs::read_dir(&dir) {
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
             if name.ends_with(".json") && !name.starts_with('.') {
-                let mtime = e.metadata().and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH);
-                entries.push((name.trim_end_matches(".json").to_string(), mtime));
+                let mtime = e
+                    .metadata()
+                    .and_then(|m| m.modified())
+                    .unwrap_or(std::time::UNIX_EPOCH);
+                // 读不出来或不是快照（损坏文件）时 created_at 留空，排序时沉到最后。
+                let created_at = fs::read(e.path())
+                    .ok()
+                    .and_then(|b| serde_json::from_slice::<Snapshot>(&b).ok())
+                    .map(|s| s.created_at)
+                    .unwrap_or_default();
+                entries.push((
+                    name.trim_end_matches(".json").to_string(),
+                    created_at,
+                    mtime,
+                ));
             }
         }
     }
-    entries.sort_by_key(|a| std::cmp::Reverse(a.1));
-    Ok(entries.into_iter().map(|(id, _)| id).collect())
+    // `created_at` 是 RFC3339（统一 UTC，无时区歧义），字典序即时间序。
+    // 只有两边都读不出 created_at 时才退回 mtime——这时也只能尽力而为。
+    entries.sort_by(|a, b| match (a.1.is_empty(), b.1.is_empty()) {
+        (false, false) => b.1.cmp(&a.1),
+        (false, true) => std::cmp::Ordering::Less,
+        (true, false) => std::cmp::Ordering::Greater,
+        (true, true) => b.2.cmp(&a.2),
+    });
+    Ok(entries.into_iter().map(|(id, _, _)| id).collect())
 }
 
 /// 删除某份快照（回滚/清理用）。
@@ -154,8 +183,20 @@ mod tests {
     use crate::snapshot::model::{SnapshotRecord, SnapshotTarget};
 
     /// 环境变量 `APPDATA` 是进程级全局；并行测试都改它会互相踩踏。
-    /// 所有需要改 APPDATA 的测试必须持有这把锁串行执行。
-    static APPDATA_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    /// 用**全局共享**的那把锁（见 `crate::testenv`）——按模块各持一把等于没锁，
+    /// 因为 `snapshot::changelog` 也在改同一个 `APPDATA`。
+    fn with_temp_appdata<F: FnOnce()>(test_name: &str, f: F) {
+        let _guard = crate::testenv::lock();
+        let dir = std::env::temp_dir().join(format!(
+            "bootflow-{}-{}",
+            test_name,
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("APPDATA", &dir);
+        f();
+    }
 
     fn sample() -> Snapshot {
         Snapshot {
@@ -180,20 +221,6 @@ mod tests {
                 risk: "Safe".into(),
             }],
         }
-    }
-
-    /// 在锁内把 `APPDATA` 指到独立的临时目录，返回守卫以保证锁跨整个测试持有。
-    fn with_temp_appdata<F: FnOnce()>(test_name: &str, f: F) {
-        let _guard = APPDATA_LOCK.lock().unwrap();
-        let dir = std::env::temp_dir().join(format!(
-            "bootflow-{}-{}",
-            test_name,
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        std::env::set_var("APPDATA", &dir);
-        f();
     }
 
     #[test]
@@ -235,6 +262,80 @@ mod tests {
             assert!(ids.contains(&"ret-4".to_string()));
             assert!(ids.contains(&"ret-3".to_string()));
             assert!(ids.contains(&"ret-2".to_string()));
+        });
+    }
+
+    /// `list()` 必须按快照正文里的 `created_at` 判新旧，**不能**按写入先后（=文件 mtime）。
+    ///
+    /// 特意逆序写入：先写时间最晚的，最后写时间最早的。
+    /// 若实现退回按 mtime 排序，顺序会整个反过来，这条就会红。
+    #[test]
+    fn list_orders_by_created_at_not_by_write_order() {
+        with_temp_appdata("order", || {
+            for (id, ts) in [
+                ("ord-new", "2026-09-15T00:03:00Z"),
+                ("ord-mid", "2026-09-15T00:02:00Z"),
+                ("ord-old", "2026-09-15T00:01:00Z"),
+            ] {
+                let mut snap = sample();
+                snap.id = id.into();
+                snap.created_at = ts.into();
+                save(&snap, 10).unwrap(); // retention 足够大，不触发清理
+            }
+
+            let ids = list().unwrap();
+            assert_eq!(
+                ids,
+                vec!["ord-new", "ord-mid", "ord-old"],
+                "应按 created_at 倒序，而不是按写入先后"
+            );
+        });
+    }
+
+    /// 保留策略在「写入顺序与时间顺序相反」时同样要删对。
+    ///
+    /// 这是踩过的坑：Windows 文件 mtime 精度约 15.6ms，连续写多份快照
+    /// （尤其机器繁忙时）它们的 mtime 会完全相同，排序随之退化，
+    /// 旧实现会删错——留下旧的、删掉新的。
+    #[test]
+    fn retention_keeps_newest_even_when_written_in_reverse() {
+        with_temp_appdata("retrev", || {
+            // i 从 4 递减到 0：最后写入的是 created_at 最早的 rr-0。
+            for i in (0..5u32).rev() {
+                let mut snap = sample();
+                snap.id = format!("rr-{i}");
+                snap.created_at = format!("2026-09-15T00:0{i}:00Z");
+                save(&snap, 3).unwrap();
+            }
+
+            let ids = list().unwrap();
+            assert_eq!(ids.len(), 3, "应保留 3 份，实际 {}", ids.len());
+            assert!(ids.contains(&"rr-4".to_string()), "最新的一份必须留下");
+            assert!(ids.contains(&"rr-3".to_string()));
+            assert!(ids.contains(&"rr-2".to_string()));
+            assert!(!ids.contains(&"rr-0".to_string()), "最旧的一份必须被清理");
+        });
+    }
+
+    /// 损坏/非快照的 `.json` 不能让 `list()` 崩，也不该顶掉正常快照。
+    #[test]
+    fn list_tolerates_corrupt_json_and_sorts_it_last() {
+        with_temp_appdata("corrupt", || {
+            let mut snap = sample();
+            snap.id = "good".into();
+            snap.created_at = "2026-09-15T00:00:00Z".into();
+            save(&snap, 10).unwrap();
+
+            let snapdir = snapshot_dir().unwrap();
+            fs::write(snapdir.join("broken.json"), b"{ this is not json").unwrap();
+
+            let ids = list().unwrap();
+            assert!(ids.contains(&"good".to_string()), "正常快照仍应列出");
+            assert_eq!(
+                ids.last().map(String::as_str),
+                Some("broken"),
+                "读不出 created_at 的文件应沉到最后"
+            );
         });
     }
 

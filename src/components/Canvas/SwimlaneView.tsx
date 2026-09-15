@@ -12,6 +12,62 @@ const fmtMs = (ms: number) => `${(ms / 1000).toFixed(1)}s`
 const PLAN_COLOR = '#a371f7'
 
 /**
+ * 这一项在时间轴上的位置。实测的观测时刻优先，退到相位起点。
+ *
+ * 返回 `1e9` 表示"没有位置"——排在最后，而不是排在最前。
+ * 用 `??` 而不是 `||`：`0` 是一个合法时刻（开机后 0 秒），不能被当成缺失。
+ */
+const startOf = (it: StartupItem): number =>
+  it.timing.observedStartMs ?? it.timing.startEstimateMs ?? 1e9
+
+/**
+ * 卡片上那个耗时角标的三种形态。
+ *
+ * 三档必须**看起来就不一样**，否则用户会把估算当实测：
+ *
+ * | 档 | 边框 | 文案 | 说的是什么 |
+ * |---|---|---|---|
+ * | 实测耗时 | 实线 · 蓝 | `3.2s` | 系统事件日志记了这一项花了 3.2 秒 |
+ * | 实测出现时刻 | 实线 · 青 | `@12.4s` | 内核记的：它在开机后 12.4 秒出现 |
+ * | 估算 | 虚线 · 灰 | `~19.4s` | 它所属相位的起点，**不是**它自己的时刻 |
+ *
+ * 第二档最容易说错：`@12.4s` 是"什么时候出现"，不是"花了多久"。
+ * 所以它的 tooltip 必须把这句话写出来——只靠颜色区分是不够的。
+ */
+function timingBadge(item: StartupItem): { text: string; color: string; title: string; solid: boolean } | null {
+  const { timing } = item
+  if (timing.confidence === 'measured' && timing.durationMs !== undefined) {
+    return {
+      text: fmtMs(timing.durationMs),
+      color: '#58a6ff',
+      solid: true,
+      title: `系统记录了它上一次开机启动花了 ${fmtMs(timing.durationMs)}（事件 ${timing.sourceEventId ?? '—'}）。这是实测值。`,
+    }
+  }
+  if (timing.confidence === 'observed' && timing.observedStartMs !== undefined) {
+    return {
+      text: `@${fmtMs(timing.observedStartMs)}`,
+      color: '#39c5bb',
+      solid: true,
+      title:
+        `内核记录了它的进程创建时刻：开机后 ${fmtMs(timing.observedStartMs)} 出现。` +
+        '这是「出现时刻」，不是它花了多久——Windows 不为没有异常表现的启动项记录耗时。',
+    }
+  }
+  if (timing.confidence === 'estimated' && timing.startEstimateMs !== undefined) {
+    return {
+      text: `~${fmtMs(timing.startEstimateMs)}`,
+      color: '#6e7681',
+      solid: false,
+      title:
+        `按开机相位推算：它属于「${PHASE_LABEL[item.bootPhase] ?? '未知阶段'}」这一段，` +
+        '而这一段从开机后这个时刻开始。同一相位里的所有项都是这个数字，所以它不是这一项自己的启动时刻。',
+    }
+  }
+  return null
+}
+
+/**
  * 泳道视图：泳道 = 开机阶段，卡片 = 启动项。
  *
  * 卡片边框区分数据可信度：实测（measured）用实线，估算（estimated）用虚线，
@@ -58,8 +114,10 @@ export function SwimlaneView({ items }: { items: StartupItem[] }) {
           if (ob === undefined) return -1
           if (oa !== ob) return oa - ob
         }
-        // 无编排顺序时按估算启动时刻升序，无时刻的排最后
-        return (a.timing.startEstimateMs ?? 1e9) - (b.timing.startEstimateMs ?? 1e9)
+        // 无编排顺序时按**启动时刻**升序，两者都没有的排最后。
+        // 优先用实测的观测时刻：它是这一项自己的时间位置（内核记录）；
+        // 相位估算只是"它属于哪一段"，同相位的项会拿到同一个数字。
+        return startOf(a) - startOf(b)
       })
     }
 
@@ -198,8 +256,7 @@ function LaneCard({
   const kind = KIND_META[resolveKind(item)]
   const title = displayNameOf(item)
   const active = selectedId === item.id
-  const measured = item.timing.confidence === 'measured'
-  const hasTiming = item.timing.confidence !== 'none'
+  const badge = timingBadge(item)
   const draggable = isOrchestrable(item)
 
   /** 落点提示：卡片是横排的，用左右半区决定插到前面还是后面 */
@@ -249,7 +306,8 @@ function LaneCard({
             : meta.color === '#3fb950'
               ? '#30363d'
               : meta.color,
-        borderStyle: measured ? 'solid' : 'dashed',
+        // 实线 = 数据来自内核/事件日志（实测）；虚线 = 我们推的
+        borderStyle: badge?.solid === false ? 'dashed' : 'solid',
         borderLeftWidth: 3,
       }}
     >
@@ -274,13 +332,9 @@ function LaneCard({
           {shortPublisher(item.signer.publisher) ?? '未签名'}
         </span>
         <div className="flex-1" />
-        {hasTiming && (
-          <Badge
-            color={measured ? '#58a6ff' : '#6e7681'}
-            title={measured ? '来自系统事件日志的实测值' : '按启动相位推算的估算值'}
-          >
-            {measured ? '' : '~'}
-            {item.timing.durationMs ? fmtMs(item.timing.durationMs) : fmtMs(item.timing.startEstimateMs ?? 0)}
+        {badge && (
+          <Badge color={badge.color} title={badge.title}>
+            {badge.text}
           </Badge>
         )}
       </div>

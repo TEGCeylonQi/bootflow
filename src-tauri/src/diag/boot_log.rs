@@ -261,7 +261,10 @@ fn parse_data_entries(xml: &str) -> BTreeMap<String, String> {
 }
 
 /// 还原 XML 实体。
-fn unescape_xml(s: &str) -> String {
+///
+/// `pub(crate)`：`startup_info` 也用同一份实现。两份转义表迟早会分叉，
+/// 而分叉点是"路径里的 `&amp;` 还原不还原"这种只在一部分机器上出错的地方。
+pub(crate) fn unescape_xml(s: &str) -> String {
     if !s.contains('&') {
         return s.to_string();
     }

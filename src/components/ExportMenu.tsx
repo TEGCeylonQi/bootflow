@@ -39,6 +39,8 @@ export function ExportMenu() {
   const elevated = useAppStore((s) => s.elevated)
   const scannedAt = useAppStore((s) => s.scannedAt)
   const bootTimeline = useAppStore((s) => s.bootTimeline)
+  const observation = useAppStore((s) => s.observation)
+  const impact = useAppStore((s) => s.impact)
   const errors = useAppStore((s) => s.errors)
   const status = useAppStore((s) => s.status)
 
@@ -73,6 +75,15 @@ export function ExportMenu() {
       elevated,
       scannedAt: scannedAt ?? new Date().toISOString(),
       bootTimeline,
+      observation: observation ?? { processCount: 0, observedCount: 0 },
+      // 没扫过时给一份"读不到"的空概况，而不是 `{}`——后者会让报告
+      // 把一个不存在的读取说成"读到了 0 条"，那是另一回事。
+      impact: impact ?? {
+        recordCount: 0,
+        matchedCount: 0,
+        isCurrentUser: false,
+        unavailableReason: '本次未执行扫描，没有这份数据。',
+      },
       errors,
     })
     download(filenameFor(f, scannedAt), content, EXPORT_META[f].mime)

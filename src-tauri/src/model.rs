@@ -125,13 +125,63 @@ pub enum RiskLevel {
     Safe,
 }
 
+/// 「启动影响」三档 —— **与任务管理器同一把尺子**。
+///
+/// 阈值不是我们定的，是微软公开的口径（High = CPU > 1 秒或磁盘 > 3 MB；
+/// Medium = CPU ≥ 300 ms 或磁盘 ≥ 300 KB；否则 Low）。
+/// 照抄的理由很实际：用户能打开任务管理器逐条对照，
+/// 两边档位不一致会立刻让整个软件不可信。
+///
+/// ⚠️ 它量的是**资源占用**，不是"让开机慢了几秒"。多线程程序的 CPU
+/// 时间跨核累加，可以超过窗口本身的长度——所以这一档从不与耗时混着算。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ImpactLevel {
+    Low,
+    Medium,
+    High,
+}
+
+/// 一项的「启动影响」：Windows 自己在登录窗口里实测出来的资源消耗。
+///
+/// 来源是 WDI 的 `StartupInfo` XML（见 `diag::startup_info`），
+/// **任务管理器的「启动影响」列读的就是它**。
+///
+/// 与 `ItemTiming` 的关系：`ItemTiming` 回答"它在什么时候出现 / 花了多久"，
+/// `ItemImpact` 回答"它有多重"。两条轴互不替代——一个程序可以在开机后
+/// 第 12 秒才出现（时间轴上很靠后），同时是全场最重的那个。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ItemImpact {
+    /// 窗口内消耗的 CPU 时间（毫秒）。⚠️ 跨核累加，不是墙钟耗时。
+    pub cpu_ms: u64,
+    /// 窗口内读写的磁盘字节数。
+    pub disk_bytes: u64,
+    /// 按微软阈值分出的档位。
+    pub level: ImpactLevel,
+    /// 它在跟踪窗口里的第几秒被拉起（Windows 记的）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub started_in_trace_ms: Option<u64>,
+    /// 对应上了几个进程实例。>1 时界面要说明这些数字是合计值。
+    pub process_count: usize,
+}
+
 /// 耗时数据的可信度 —— 「诚实原则」的代码化。
+///
+/// 四个档次的区别**不是**"准不准"，而是"测到了什么"：
+/// Windows 只对少数被判慢的项记录耗时，所以"有耗时"和"有实测"不是一回事。
+/// 把这两者混成一个"实测"，就等于拿出现时刻冒充耗时。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Confidence {
-    /// 来自系统事件日志的硬证据（目前仅 Event 103）
+    /// **实测耗时**：系统事件日志里留下了这一项的耗时硬证据（Event 101/102/103）。
+    /// 只有被判慢的项才有——这是 Windows 唯一会记单项耗时的地方。
     Measured,
-    /// 按启动相位推算，界面上必须标注为估算
+    /// **实测出现时刻**：内核记录了它的进程创建时刻，我们知道它在开机后第几秒出现，
+    /// 但**不知道它花了多久**（那取决于应用自己什么时候算"就绪"）。
+    /// 数据同样是实测的，只是量到的不是耗时。
+    Observed,
+    /// **估算**：按启动相位推算，界面上必须标注为估算且不显示时长。
     Estimated,
     /// 信息不足，不参与甘特图绘制
     None,
@@ -258,15 +308,41 @@ pub struct SignerInfo {
 #[serde(rename_all = "camelCase")]
 pub struct ItemTiming {
     pub confidence: Confidence,
-    /// 相对开机起点的估算启动时刻，毫秒
+    /// 相对开机起点的**估算**启动时刻，毫秒。
+    ///
+    /// ⚠️ `Confidence::Estimated` 才用它，值是"它所属的开机相位是从第几毫秒开始的"。
+    /// 同一个相位里的所有项拿到的是**同一个**数字——这不是数据，是相位边界。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub start_estimate_ms: Option<u64>,
-    /// 该时长耗时，毫秒
+    /// 该时长耗时，毫秒。
+    ///
+    /// ⚠️ **只有 `Measured` 才会填**。系统没记这项耗时就是没有，不换算、不补值。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
     /// 数据来源事件 ID，如 103
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_event_id: Option<u32>,
+    /// **实测**：进程创建时刻相对本次开机起点的毫秒数（内核记录）。
+    ///
+    /// 这是"拆到单项"真正落地的地方——每一项自己的真实时间位置。
+    /// 但它**不是耗时**，界面措辞必须是"开机后第 N 秒出现"。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observed_start_ms: Option<u64>,
+    /// **实测**：快照那一刻，该进程**从启动至今**累计从磁盘读取的字节数。
+    ///
+    /// 必须与 `observed_at_ms` 一起看：它不是"开机阶段读了这么多"。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub read_bytes: Option<u64>,
+    /// 快照拍摄于开机后多久（毫秒）。用来界定上面那个累计值有多"新"。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observed_at_ms: Option<u64>,
+    /// **实测**：Windows 自己在登录窗口里量出来的资源消耗（WDI `StartupInfo`）。
+    ///
+    /// 与上面几项是**并存的**，不是替代关系：一个项完全可以既有出现时刻、
+    /// 又有实测耗时、还有实测影响。`None` = 这次没拿到它的记录
+    /// （没在登录窗口里跑、不在这份数据覆盖的启动机制内、或没提权读不到）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub impact: Option<ItemImpact>,
 }
 
 impl Default for ItemTiming {
@@ -276,6 +352,10 @@ impl Default for ItemTiming {
             start_estimate_ms: None,
             duration_ms: None,
             source_event_id: None,
+            observed_start_ms: None,
+            read_bytes: None,
+            observed_at_ms: None,
+            impact: None,
         }
     }
 }
@@ -489,6 +569,87 @@ pub struct ScanResult {
     /// ISO8601
     pub scanned_at: String,
     pub boot_timeline: BootTimeline,
+    /// 本次扫描时做的**进程采样**概况。见 `ItemObservation`。
+    pub observation: ItemObservation,
+    /// 本次扫描读到的**启动影响**数据概况。见 `ImpactOverview`。
+    pub impact: ImpactOverview,
     /// 各来源可容忍的部分失败，不阻断整体扫描
     pub errors: Vec<String>,
+}
+
+/// 一次 WDI `StartupInfo` 读取的概况。
+///
+/// 与 `ItemObservation` 同样的理由单列出来：**"一项都没对上"和"没读到"
+/// 必须能分清**。前者是数据在、但我们的启动项列表里没有匹配的映像；
+/// 后者是权限/版本/策略导致这份数据根本不存在——
+/// 两者的处置完全不同，让界面去猜就成了编造。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImpactOverview {
+    /// 跟踪窗口长度（毫秒）。所有 CPU / 磁盘数字都只覆盖这么长一段时间。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub window_ms: Option<u64>,
+    /// 文件里一共多少条进程记录。
+    pub record_count: usize,
+    /// 其中成功对应到启动项的个数。
+    pub matched_count: usize,
+    /// 数据取自哪个账户的登录会话（SID）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_sid: Option<String>,
+    /// 上面那个 SID 是不是当前登录用户。
+    ///
+    /// `false` 时界面**必须**说明"这是另一个账户那次登录的记录"——
+    /// 把别人的登录数据当成自己的，比不给数据更糟。
+    pub is_current_user: bool,
+    /// 数据来自哪个文件。用户能自己去打开核对，这是这份数据最经得起验证的地方。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_file: Option<String>,
+    /// 不可用时的原因（人话）。可用时为空。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unavailable_reason: Option<String>,
+}
+
+impl ImpactOverview {
+    /// 从读取结果生成概况。`matched_count` 由调用方在归因后回填。
+    pub fn from_report(rep: &crate::diag::startup_info::StartupInfoReport) -> Self {
+        // ⚠️ `StartupInfoReport::default()` 是"可用但空"（没有原因、没有记录）。
+        // 那种状态直接交给界面，界面就只能自己猜是"读到了空文件"还是"没读到"。
+        // 在这里归一化成一个明确的原因，让界面永远不需要猜。
+        let reason = rep.unavailable_reason.clone().or_else(|| {
+            rep.records
+                .is_empty()
+                .then(|| "这次没有读到任何开机启动影响记录。".to_string())
+        });
+
+        Self {
+            window_ms: rep.window_ms,
+            record_count: rep.records.len(),
+            matched_count: 0,
+            source_sid: rep.source_sid.clone(),
+            is_current_user: rep.is_current_user,
+            source_file: rep.source_file.clone(),
+            unavailable_reason: reason,
+        }
+    }
+}
+
+/// 一次开机进程采样的概况。
+///
+/// 为什么单列成一个结构、而不是让前端从各项的 `timing` 里自己汇总：
+/// **一项都没匹配上时也必须能说清"为什么"**。空数组既可能是"采样失败"，
+/// 也可能是"采到了但没一项对得上"，两者的处置完全不同——
+/// 让界面去猜就成了编造，而这里恰好有一个确定的答案。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ItemObservation {
+    /// 采样拍摄于开机后多久（毫秒）。`None` = 连开机起点都没拿到，采样不可用。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub captured_at_offset_ms: Option<u64>,
+    /// 采样窗口内一共多少个进程。
+    pub process_count: usize,
+    /// 其中成功对应到启动项的个数。
+    pub observed_count: usize,
+    /// 不可用时的原因（人话）。可用时为空。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unavailable_reason: Option<String>,
 }

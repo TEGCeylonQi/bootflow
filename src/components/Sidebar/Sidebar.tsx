@@ -15,23 +15,50 @@ export function Sidebar() {
   const checkedIds = useAppStore((s) => s.checkedIds)
   const filtered = useFilteredItems()
 
-  /** 按「类型」分组，空组不显示；组内把有问题的项排到前面 */
+  const sortBy = useAppStore((s) => s.sortBy)
+
+  /**
+   * 按「类型」分组，空组不显示；组内排序由 `sortBy` 决定。
+   *
+   * 两种排序回答的是**两个不同的问题**，所以刻意不合成一个分数：
+   * - `default`：谁先跑起来（有问题的优先，其余按实测出现时刻）
+   * - `impact` ：谁最费资源（按 Windows 自记的启动影响从重到轻）
+   *
+   * ⚠️ 影响档只对**拿到了那份数据**的项有效。没有数据的项一律沉底——
+   * 它们的"重"是未知，不是零；拿未知去参与比较，排出来的顺序就是假的。
+   */
   const grouped = useMemo(() => {
     const map = new Map<ItemKind, StartupItem[]>()
     for (const k of KIND_ORDER) map.set(k, [])
     for (const it of filtered) map.get(resolveKind(it))?.push(it)
 
+    /** 影响排序的分数：CPU 毫秒 + 磁盘 KB。没有数据 → 无穷大（沉底）。 */
+    const impactScore = (i: StartupItem) => {
+      const im = i.timing.impact
+      if (!im) return Number.POSITIVE_INFINITY
+      return im.cpuMs + im.diskBytes / 1024
+    }
+
     for (const [, list] of map) {
       list.sort((a, b) => {
+        if (sortBy === 'impact') {
+          const sa = impactScore(a)
+          const sb = impactScore(b)
+          if (sa !== sb) return sa - sb
+          // 两者都没有影响数据时，退回时序，避免顺序随机
+        }
         const pa = isProblem(a) ? 0 : 1
         const pb = isProblem(b) ? 0 : 1
         if (pa !== pb) return pa - pb
-        return (a.timing.startEstimateMs ?? 1e9) - (b.timing.startEstimateMs ?? 1e9)
+        // 实测的出现时刻优先于相位估算——前者是这一项自己的位置，
+        // 后者只是「它属于哪一段」，同相位的项会排在一起
+        const at = (i: typeof a) => i.timing.observedStartMs ?? i.timing.startEstimateMs ?? 1e9
+        return at(a) - at(b)
       })
     }
 
     return [...map.entries()].filter(([, v]) => v.length > 0)
-  }, [filtered])
+  }, [filtered, sortBy])
 
   const loading = status === 'scanning' && items.length === 0
 

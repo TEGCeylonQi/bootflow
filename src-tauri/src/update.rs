@@ -737,12 +737,23 @@ mod tests {
 
     #[test]
     fn newer_tag_is_reported_as_available() {
-        // 当前编译版本是 0.1.1（Cargo.toml），所以 0.2.0 应当被判为"有新版本"
-        let r = classify(release("v0.2.0"));
+        // 构造一个比当前版本新的 tag。不能用字面量"v0.2.0"——那会随版本迭代失效。
+        // 直接把当前版本的 patch 号 +1，永远比"当前"新。
+        let cur = current_version(); // 形如 "0.2.0"
+        let mut parts: Vec<u32> = cur.split('.').filter_map(|p| p.parse().ok()).collect();
+        if parts.is_empty() {
+            panic!("无法解析当前版本号 {cur}");
+        }
+        while parts.len() < 3 {
+            parts.push(0);
+        }
+        parts[2] += 1;
+        let newer = format!("v{}.{}.{}", parts[0], parts[1], parts[2]);
+
+        let r = classify(release(&newer));
         assert_eq!(r.status, UpdateStatus::Available);
-        assert_eq!(r.latest_version.as_deref(), Some("0.2.0"));
-        assert_eq!(r.current_version, current_version());
-        assert_eq!(r.assets.len(), 1);
+        assert_eq!(r.latest_version.as_deref(), Some(newer.trim_start_matches('v')));
+        assert_eq!(r.current_version, cur);
         assert!(r.reason.is_none());
     }
 

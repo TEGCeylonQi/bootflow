@@ -105,6 +105,30 @@ fn build_from_events(events: &[RawEvent]) -> BootTimeline {
         }
     }
 
+    // ⚠️ 兜底：Event 100 存在、但上面无论如何都推不出任何一段时
+    //（version 1 老模板连 BootTime/MainPathBootTime 都没有，或都是 0），
+    // 面向用户的耗时页会误判成"系统没记录"——而诊断只看"有没有 Event 100"
+    // 判正常，两者必然打架。这里用能找到的最大总长兜成一段，
+    // 让耗时页至少画出时长，不让用户以为"系统觉得不值得记"。
+    if timeline.phases.is_empty() {
+        if let Some(total) = boot_time.filter(|&t| t > 0) {
+            // 只有 PostBoot 会超出主路径；连主路径都没有时，总时长本身就是完整的一段
+            timeline.phases.push(PhaseSpan {
+                name: BootPhase::Logon,
+                start_ms: 0,
+                end_ms: total,
+            });
+            log::info!("Event 100 无可用相位，用总时长 {total}ms 兜底一段");
+        } else if let Some(mp) = main_path.filter(|&v| v > 0) {
+            timeline.phases.push(PhaseSpan {
+                name: BootPhase::Logon,
+                start_ms: 0,
+                end_ms: mp,
+            });
+            log::info!("Event 100 无相位与总时长，退回 MainPathBootTime {mp}ms 兜底一段");
+        }
+    }
+
     // 内部一致性自检：相位不应越界到总时长之外
     if let Some(total) = boot_time {
         let overshoot = timeline
@@ -451,6 +475,19 @@ mod tests {
     }
 
     #[test]
+    fn bare_event_with_total_falls_back_to_total() {
+        // 兜底语义：Event 100 只有总时长（没有分段锚点，也没有主路径）时，
+        // 耗时页必须能看到这段时长——不能因为拆不出相位就变成"没记录"。
+        let e2 = ev(100, &[("BootTime", "120000")]);
+        let tl2 = build_from_events(&[e2]);
+        assert_eq!(tl2.phases.len(), 1);
+        assert_eq!(tl2.phases[0].name, BootPhase::Logon);
+        assert_eq!(tl2.phases[0].start_ms, 0);
+        assert_eq!(tl2.phases[0].end_ms, 120000);
+        assert_eq!(tl2.total_boot_ms, Some(120000));
+    }
+
+    #[test]
     fn phases_beyond_total_are_clamped() {
         // 字段错位导致相位越过总时长时，宁可截断也不能画出超界的条
         let mut e = boot_event();
@@ -682,5 +719,30 @@ mod tests {
             .find(|s| s.name == "windefend")
             .unwrap();
         assert_eq!(wd.duration_ms, 999, "应保留最近一次（排序后靠前的那条）");
+    }
+
+    /// 真机探测：打印一次真实的 timeline，确认耗时页到底有没有相位可画。
+    /// 读真实系统且结果与机器状态相关 → 标 ignore,真机手动跑。
+    /// 运行：cargo test --lib probe_real_timeline -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn probe_real_timeline() {
+        let outcome = crate::diag::boot_log::read_boot_events();
+        match &outcome {
+            BootLogOutcome::Events(evs) => {
+                let tl = build(&outcome);
+                println!(
+                    "PROBE events={} total={:?} phases={}",
+                    evs.len(),
+                    tl.total_boot_ms,
+                    tl.phases.len()
+                );
+                for p in &tl.phases {
+                    println!("  phase {:?} {}→{}", p.name, p.start_ms, p.end_ms);
+                }
+                println!("  unavailable_reason={:?}", tl.unavailable_reason);
+            }
+            other => println!("PROBE outcome={:?}", other),
+        }
     }
 }

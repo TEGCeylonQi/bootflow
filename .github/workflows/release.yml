@@ -1,0 +1,134 @@
+# BootFlow 发布流水线
+#
+# 触发方式：推一个版本 tag。发布一个新版本就三步——
+#
+#   # 1. 先把版本号改进 tauri.conf.json（"version": "0.2.0"）
+#   # 2. 提交
+#   git commit -am "chore: 版本号 0.2.0"
+#   # 3. 打 tag 并推上去（tag 名必须以 v 开头）
+#   git tag v0.2.0
+#   git push origin main --tags
+#
+# 然后这个 workflow 会自动构建出安装包、创建 Release、把产物挂上去。
+# 不需要在本地构建，也不需要在网页上手动传文件。
+#
+# 为什么用 tag 触发而不是「推 main 就发版」：
+# 发布是个有外部影响、且会被别人下载到的动作，必须由人明确决定。
+# 推 main 是日常动作，天天发生；打 tag 是有意识的动作。
+#
+# 这个 workflow 的产物与 CI 是分开的：
+#   - ci.yml    每次推 main / PR 都跑，只做检查，不产出可下载的东西
+#   - release.yml 只在打 tag 时跑，构建真正的发布产物
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+# tauri-action 需要创建 Release 并上传附件，这属于「写仓库内容」。
+# 不声明的话 GITHUB_TOKEN 只有只读权限，会在最后一步失败。
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: 构建并发布
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: 安装前端依赖
+        run: npm ci
+
+      # 这一步做四件事：跑 `npm run build` 出前端产物 → 编译 Rust release →
+      # 用 NSIS 打包 → 创建 Release 并把安装包作为附件传上去。
+      #
+      # `tagName: v__VERSION__` 中的 __VERSION__ 会被替换成 tauri.conf.json
+      # 里的 version。所以**改版本号只需要改那一个地方**，tag 名会自动对上。
+      # 如果 tag 已经存在（我们就是先打的 tag），它会用那个 tag 建 release。
+      - name: 构建并发布
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v__VERSION__
+          releaseName: 'BootFlow v__VERSION__ — 只读体检版'
+          # Release 正文会直接展示给下载的人，口径必须与 README 一致：
+          # 说清「这个版本不写任何系统配置」，也如实写明未验证的范围。
+          releaseBody: |
+            BootFlow 把 Windows 上散落在多处的开机自启机制统一收拢，让你看清
+            「到底是什么拖慢了我的开机」。
+
+            **这是只读体检版，不会修改你系统的任何一项配置。** 所有功能都是读取与呈现。
+
+            ### 能做什么
+
+            - 扫出四类启动来源：启动文件夹、注册表 Run / RunOnce（含 32 位视图）、
+              带开机/登录触发器的计划任务、开机自启服务；同时检测 AppInit_DLLs 与 IFEO 这类系统级注入
+            - 拆解开机各阶段耗时，并标出拖慢启动的具体项目
+            - 对每一项做三层风险评级，划出「不该动」的禁改区
+            - 识别已经失效的启动项（程序被卸载、路径不存在、网络位置不可达）
+            - 导出报告（JSON / CSV / Markdown）
+
+            ### 下载哪个
+
+            | 文件 | 说明 |
+            |---|---|
+            | `BootFlow___VERSION___x64-setup.exe` | 安装版，用户级安装，**不需要管理员权限** |
+            | `bootflow-portable-x64.zip` | 便携版，解压直接运行，不写注册表 |
+
+            两个都需要 [WebView2 运行时](https://developer.microsoft.com/microsoft-edge/webview2/)。
+            Windows 11 与较新的 Windows 10 已内置，通常无需另行安装。
+
+            ### 关于数据的诚实说明
+
+            界面上的耗时数字分三档：**实测**（来自系统开机性能日志）、**估算**（只给位置不给时长）、
+            **未知**（读不到）。读不到时会明确告诉你「需要管理员权限」，而不是显示成「开机 0 秒」。
+
+            未提权运行时，开机耗时那一层数据是读不到的——这是 Windows 事件日志的权限设计决定的，
+            不是故障。启动项列表本身不受影响，它直接从注册表、文件系统和任务计划库里读。
+
+            ### 已知限制
+
+            - 仅在 Windows 11 24H2 上验证过。Windows 10 / Server / ARM64 **未经验证**
+            - 空窗口需要 WebView2；若系统过旧可能提示安装
+            - 未覆盖 BHO、UWP StartupTask、Winlogon、驱动类自启
+
+            详见 [README](https://github.com/TEGCeylonQi/bootflow#readme)。
+          # 直接发布，不留在草稿箱。改动内容都过了一遍去私人化检查，
+          # 且发布本身可以随时撤回（Release 可改为草稿）。
+          releaseDraft: false
+          prerelease: false
+
+      # 便携版：把编译出的 exe 单独打包成 zip。
+      #
+      # 为什么不直接用 tauri-action 的 `uploadPlainBinary`：那个选项的官方注释
+      # 明确写着「Tauri 并不官方支持便携模式」，且要求配合 `--no-bundle` 使用，
+      # 会牵动 updater 的 bundle_type 判定。我们自己压一个 zip 更直白，
+      # 也让发布产物保持「安装包 + 便携包」两种，与计划 §10 一致。
+      #
+      # ⚠️ 便携版的 exe 依然需要 WebView2 运行时，这一点在 Release 正文里已说明。
+      - name: 打包便携版并挂到 Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          Compress-Archive `
+            -Path src-tauri/target/release/bootflow.exe `
+            -DestinationPath bootflow-portable-x64.zip `
+            -Force
+          gh release upload "${{ github.ref_name }}" bootflow-portable-x64.zip --clobber
+          Write-Host "便携版已上传：$(Get-Item bootflow-portable-x64.zip | Select-Object -ExpandProperty Length) 字节"

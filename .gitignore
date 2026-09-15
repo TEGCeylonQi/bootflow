@@ -35,3 +35,6 @@ bootflow.exe
 
 # WorkBuddy 项目数据（计划、记忆、本机工具链安装记录）
 .workbuddy/
+
+# vite 加载配置时留下的临时文件
+vite.config.ts.timestamp-*.mjs

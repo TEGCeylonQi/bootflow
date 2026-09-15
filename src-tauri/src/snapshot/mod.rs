@@ -12,7 +12,9 @@
 
 pub mod guard;
 pub mod model;
+pub mod plan;
 pub mod store;
+pub mod txn;
 
 // T40 验收：round-trip 测试、保留策略、schema 版本检查 —— 已在 store.rs 内。
 

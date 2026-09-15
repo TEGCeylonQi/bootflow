@@ -102,25 +102,29 @@ const KIND_NOUN: Record<ItemKind, string> = {
 /**
  * 一段人话说明。后端提供 summary 时优先用它，否则按
  * 「类型 + 发布者 + 启动时机」组装。
+ *
+ * 刻意不写"这是一个××"：界面上方已有类型徽章，重复一遍是噪音。
+ * 直接说它是什么、谁提供的、什么时候跑。
  */
 export function summarize(i: StartupItem): string {
   const custom = i.summary?.trim()
   if (custom) return custom
 
   const kind = resolveKind(i)
+  const kindLabel = KIND_NOUN[kind]
   if (kind === 'system') {
-    return `${KIND_NOUN.system}，由 Windows 自带。这类组件不建议改动，本工具也不提供修改入口。`
+    return `${kindLabel}，由 Windows 自带。不建议改动，本工具不提供修改入口。`
   }
 
   const who = shortPublisher(i.signer.publisher)
   const whoPart = who ? `由 ${who} 提供` : '发布者无法核验'
-  const whenPart = i.enabled ? `，会在${phaseSlogan(i.bootPhase)}时运行` : '，当前已停用'
+  const whenPart = i.enabled ? `，随${phaseSlogan(i.bootPhase)}时运行` : '，当前已停用'
 
   if (kind === 'hook') {
-    return `${KIND_NOUN.hook}，${whoPart}。它不是一个独立程序，而是被注入到其它程序里一起运行——因此影响范围会远超它自己。`
+    return `${kindLabel}，${whoPart}。不是独立程序，会被注入到其它程序里一起运行——影响范围远超它自己。`
   }
 
-  return `这是一个${KIND_NOUN[kind]}，${whoPart}${whenPart}。`
+  return `${kindLabel}，${whoPart}${whenPart}。`
 }
 
 /** 类型徽章文案 */

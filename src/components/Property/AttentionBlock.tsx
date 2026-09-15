@@ -115,16 +115,16 @@ export function AttentionBlock({ item }: { item: StartupItem }) {
         {item.risk !== 'Safe' && <RiskBadge level={item.risk} showDesc />}
 
         {clean ? (
-          nothingToSay && (
+          nothingToSay ? (
             <div className="flex items-start gap-1.5 rounded border border-ok/30 bg-ok/5 px-2 py-1.5">
               <ShieldCheck size={12} className="mt-[2px] shrink-0 text-ok" />
               <p className="text-mini leading-4 text-ink-muted">
                 {item.risk === 'Locked'
-                  ? '这是系统自带组件，不属于需要处理的问题。本工具不提供修改入口。'
-                  : '未发现异常，这一项没有需要你处理的问题。'}
+                  ? '系统自带组件，不属于需要处理的问题。本工具不提供修改入口。'
+                  : '未发现异常。'}
               </p>
             </div>
-          )
+          ) : null
         ) : (
           <DiagnosticsBlock items={issues} />
         )}

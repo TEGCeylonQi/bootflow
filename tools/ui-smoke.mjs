@@ -289,7 +289,7 @@ try {
 
       // 启动项本身不受影响，这条要在界面上说清楚
       assert((await denied.locator('text=这不影响上面列的启动项').count()) > 0, '没有说明其余数据不受影响')
-      assert((await denied.locator('text=以管理员身份重新打开').count()) > 0, '没有给出补齐数据的入口')
+      assert((await denied.locator('text=打开系统诊断日志查看').count()) > 0, '没有给出补齐数据的入口')
       assert(deniedErrors.length === 0, `控制台报错：${deniedErrors[0]?.slice(0, 120)}`)
       return '已给出原因与补齐入口'
     })

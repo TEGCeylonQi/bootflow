@@ -130,3 +130,16 @@ export async function openReleasePage(url: string): Promise<void> {
   }
   return invokeSafe<void>('open_release_page', { url })
 }
+
+/**
+ * 在事件查看器里打开「开机诊断」通道，让用户亲眼看到 Windows 自己的记录。
+ *
+ * 当程序因权限不足读不到开机耗时、或系统还没有记录时，前端提供这个入口：
+ * 一键把用户带到 Windows 事件查看器的对应日志，而不是让他在系统里瞎翻。
+ *
+ * 浏览器开发模式下是空操作（没有事件查看器可开），由 UI 决定如何降级。
+ */
+export async function openBootLog(): Promise<void> {
+  if (!isTauri()) return
+  return invokeSafe<void>('open_boot_log')
+}

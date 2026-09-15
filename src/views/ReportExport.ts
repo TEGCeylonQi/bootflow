@@ -133,8 +133,7 @@ export function toMarkdown(result: ScanResult): string {
   const out: string[] = []
   out.push('# BootFlow 启动项体检报告')
   out.push('')
-  out.push('> 本报告由 BootFlow 生成。**全过程只读取，没有修改这台电脑上的任何设置。**')
-  out.push('> 报告里出现的每一条建议都只是建议，是否处理、怎么处理，由你决定。')
+  out.push('> 由 BootFlow 生成，只读取，未修改任何系统设置。')
   out.push('')
   out.push(`- 扫描时间：${localTime(scannedAt)}`)
   out.push(`- 系统：${sysName(os)}`)

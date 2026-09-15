@@ -44,6 +44,7 @@ export function ExportMenu() {
 
   const [open, setOpen] = useState(false)
   const [justDone, setJustDone] = useState<ExportFormat | null>(null)
+  const [justDoneMessage, setJustDoneMessage] = useState<string | null>(null)
   const boxRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -77,7 +78,11 @@ export function ExportMenu() {
     download(filenameFor(f, scannedAt), content, EXPORT_META[f].mime)
     setOpen(false)
     setJustDone(f)
-    window.setTimeout(() => setJustDone((cur) => (cur === f ? null : cur)), 2400)
+    setJustDoneMessage(`已保存到「下载」文件夹：${filenameFor(f, scannedAt)}`)
+    window.setTimeout(() => {
+      setJustDone((cur) => (cur === f ? null : cur))
+      setJustDoneMessage(null)
+    }, 2600)
   }
 
   return (
@@ -92,6 +97,15 @@ export function ExportMenu() {
         {justDone ? <Check size={13} style={{ color: '#3fb950' }} /> : <Download size={13} />}
         {justDone ? '已导出' : '导出报告'}
       </button>
+
+      {justDoneMessage && (
+        <div className="absolute right-0 top-full z-30 mt-1 w-max max-w-xs animate-slide-up rounded-md border border-ok/40 bg-elevated px-2.5 py-1.5 text-2xs leading-4 text-ink shadow-float">
+          <span className="flex items-start gap-1.5">
+            <Check size={12} className="mt-[1px] shrink-0 text-ok" />
+            <span className="break-all">{justDoneMessage}</span>
+          </span>
+        </div>
+      )}
 
       {open && (
         <div className="absolute right-0 top-full z-30 mt-1 w-72 animate-slide-up rounded-card border border-line bg-panel p-1">

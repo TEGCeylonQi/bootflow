@@ -137,6 +137,16 @@ pub async fn open_release_page(url: String) -> Result<()> {
     spawn_blocking_result(move || crate::util::shell::open_url(&url)).await
 }
 
+/// 在事件查看器里打开「开机诊断」通道。
+///
+/// 面向的场景：读不到开机耗时（权限不足 / 系统还没写记录）时，
+/// 用户想亲眼看一下 Windows 自己的记录。这个命令把用户直接带到
+/// 那个日志通道，不用自己翻事件查看器。
+#[tauri::command]
+pub async fn open_boot_log() -> Result<()> {
+    spawn_blocking_result(crate::util::shell::open_boot_log).await
+}
+
 /// 把同步函数丢到阻塞线程池并展开双层 Result。
 async fn spawn_blocking_result<T, F>(f: F) -> Result<T>
 where

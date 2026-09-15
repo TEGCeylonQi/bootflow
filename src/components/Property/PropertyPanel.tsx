@@ -62,7 +62,7 @@ export function PropertyPanel() {
 
             {hasAlias(item) && (
               <p className="mt-0.5 truncate text-2xs leading-4 text-ink-dim" title={item.name}>
-                系统里叫 {item.name}
+                注册名 {item.name}
               </p>
             )}
 

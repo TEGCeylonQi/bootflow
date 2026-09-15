@@ -94,8 +94,10 @@ export function FilterBar({ total, shown }: Props) {
           <button
             type="button"
             onClick={clearFilters}
-            className="text-2xs text-ink-dim transition-colors hover:text-accent"
+            className="flex items-center gap-1 rounded border border-line bg-elevated px-1.5 py-[1px] text-2xs text-ink transition-colors hover:border-accent hover:text-accent"
+            title="清除全部筛选条件"
           >
+            <X size={11} />
             清除
           </button>
         )}
@@ -134,7 +136,8 @@ function Chip({
       style={{
         borderColor: active ? color : '#30363d',
         color: active ? color : '#8b949e',
-        background: active ? `${color}1f` : 'transparent',
+        background: active ? `${color}33` : 'transparent',
+        fontWeight: active ? 600 : 400,
       }}
     >
       <Dot color={color} size={5} />

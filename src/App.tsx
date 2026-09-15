@@ -92,7 +92,7 @@ export default function App() {
           resetWidth={PANE.sidebar.def}
         />
 
-        <main className="min-w-0">
+        <main className="min-h-0 min-w-0">
           <WorkCanvas />
         </main>
 

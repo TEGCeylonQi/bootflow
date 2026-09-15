@@ -3,7 +3,7 @@ import ReactECharts from 'echarts-for-react'
 import { ShieldAlert } from 'lucide-react'
 import { useAppStore } from '@/store/useAppStore'
 import { PHASE_COLOR, PHASE_LABEL } from '@/constants'
-import { isTauri, requestElevation } from '@/api/commands'
+import { isTauri, openBootLog, requestElevation } from '@/api/commands'
 import type { PhaseSpan } from '@/types/model'
 
 const AXIS_TEXT = '#8b949e'
@@ -263,21 +263,27 @@ export function GanttView(_props: { items: unknown[] }) {
             <span className="text-ink-muted">唯一缺的是「每一段各花了多久」这一层数据。</span>
           </p>
 
-          {bootTimeline.needsElevation &&
-            (isTauri() ? (
+          <div className="mt-2.5 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void openBootLog()}
+              className="rounded-md border px-2.5 py-1 text-xs transition-colors hover:bg-hover"
+              style={{ borderColor: '#d2992266', color: '#d29922' }}
+            >
+              打开系统诊断日志查看
+            </button>
+
+            {bootTimeline.needsElevation && isTauri() && (
               <button
                 type="button"
                 onClick={() => void requestElevation()}
-                className="mt-2.5 rounded-md border px-2.5 py-1 text-xs transition-colors hover:bg-hover"
-                style={{ borderColor: '#d2992266', color: '#d29922' }}
+                className="rounded-md border border-line px-2.5 py-1 text-xs text-ink-muted transition-colors hover:text-ink"
+                title="以管理员身份重新打开，程序启动时会自动读取耗时数据"
               >
-                以管理员身份重新打开，补齐耗时数据
+                以管理员权限重开
               </button>
-            ) : (
-              <p className="mt-2 text-2xs text-ink-dim">
-                打包成桌面应用后，这里会出现「以管理员身份重新打开」的入口。
-              </p>
-            ))}
+            )}
+          </div>
         </div>
       </div>
     )

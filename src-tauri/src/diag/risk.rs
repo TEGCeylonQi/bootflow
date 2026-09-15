@@ -177,7 +177,10 @@ pub fn assess(item: &StartupItem) -> (RiskLevel, Vec<String>) {
 }
 
 /// 是否属于「任何版本都不给写入口」的禁改区。
-fn locked_reason(item: &StartupItem) -> Option<String> {
+///
+/// `pub` 是因为写护栏（snapshot/guard.rs）必须复用同一套判据 —
+/// 禁改区不能在两处各说一套。
+pub fn locked_reason(item: &StartupItem) -> Option<String> {
     // 路径在系统目录里（System32 / SysWOW64 / WinSxS 等）。
     //
     // 对服务而言这涵盖了 svchost 承载的全部服务——看起来"一刀切"，

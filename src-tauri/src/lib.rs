@@ -24,10 +24,12 @@ mod error;
 mod model;
 mod pipeline;
 mod scanners;
+mod snapshot;
 mod sys;
 mod update;
 mod util;
 mod valid;
+mod writers;
 
 pub use error::AppError;
 

@@ -125,7 +125,9 @@ pub fn finalize(items: &mut [StartupItem], timeline: &BootTimeline) -> PipelineS
     // ⑥ 风险评级 —— 读 ⑤ 注入的诊断，所以必须在它之后
     for it in items.iter_mut() {
         let (level, reasons) = diag::risk::assess(it);
-        it.risk = level;
+        // 编译期防线：SystemHook（AppInit_DLLs / IFEO 注入）无论评估结果如何，
+        // 一律顶格 Locked —— 这类来源在类型层就禁止任何写入口（写护栏 guard.rs 兜底）。
+        it.risk = crate::snapshot::guard::mark_locked(it.source, level);
         it.risk_reasons = reasons;
         if level == crate::model::RiskLevel::Locked {
             stats.locked += 1;

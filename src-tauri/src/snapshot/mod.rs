@@ -10,9 +10,12 @@
 //! - `changelog.rs`  （T46）变更日志
 //! - `export_script.rs`（T47）独立回滚脚本
 
+pub mod changelog;
+pub mod export_script;
 pub mod guard;
 pub mod model;
 pub mod plan;
+pub mod rollback;
 pub mod store;
 pub mod txn;
 

@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { Clock, Loader2, Monitor, RefreshCw, ShieldCheck, ShieldX, SlidersHorizontal, Stethoscope } from 'lucide-react'
 import { useAppStore } from '@/store/useAppStore'
 import { usePlanStore } from '@/store/usePlanStore'
@@ -8,6 +8,7 @@ import type { AppMode } from '@/types/plan'
 import { Badge, Dot } from '@/components/common/Badge'
 import { ExportMenu } from '@/components/ExportMenu'
 import { UpdateBadge } from '@/components/Update/UpdateBadge'
+import { BootDiagPanel } from '@/components/Diagnose/BootDiagPanel'
 
 const PLAN_COLOR = '#a371f7'
 
@@ -47,6 +48,8 @@ export function TopBar() {
   const mode = usePlanStore((s) => s.mode)
   const setMode = usePlanStore((s) => s.setMode)
   const changeCount = usePlanStore((s) => s.order.length)
+
+  const [diagOpen, setDiagOpen] = useState(false)
 
   const riskCount = useMemo(() => {
     const c: Record<RiskLevel, number> = { Locked: 0, High: 0, Medium: 0, Safe: 0 }
@@ -99,25 +102,46 @@ export function TopBar() {
          * 尤其第三种：**没权限读**显示成"—"最容易被读成"0 秒、开机飞快"，
          * 那是这个界面最容易撒的一个谎，所以这里显式写成「未读取」并给出原因。
          */}
-        <div
-          className="flex items-center gap-1.5"
-          title={
-            bootTimeline?.unavailableReason
-              ? `未读取：${bootTimeline.unavailableReason}`
-              : bootTimeline?.totalBootMs
-                ? '本次开机各阶段耗时合计'
-                : '系统还没有记录开机性能数据'
-          }
-        >
-          <Clock size={13} className="text-ink-dim" />
-          <span className="text-ink-muted">开机耗时</span>
-          {bootTimeline?.unavailableReason ? (
-            <span className="font-semibold" style={{ color: '#d29922' }}>
-              未读取
-            </span>
-          ) : (
-            <span className="tnum font-semibold text-ink">{fmtSeconds(bootTimeline?.totalBootMs)}</span>
-          )}
+        <div className="relative flex items-center gap-1.5">
+          <div
+            className="flex items-center gap-1.5"
+            title={
+              bootTimeline?.unavailableReason
+                ? `未读取：${bootTimeline.unavailableReason}`
+                : bootTimeline?.totalBootMs
+                  ? '本次开机各阶段耗时合计'
+                  : '系统还没有记录开机性能数据'
+            }
+          >
+            <Clock size={13} className="text-ink-dim" />
+            <span className="text-ink-muted">开机耗时</span>
+            {bootTimeline?.unavailableReason ? (
+              <span className="font-semibold" style={{ color: '#d29922' }}>
+                未读取
+              </span>
+            ) : (
+              <span className="tnum font-semibold text-ink">{fmtSeconds(bootTimeline?.totalBootMs)}</span>
+            )}
+          </div>
+
+          {/* 一键诊断：为什么没有开机性能数据（常驻入口，不只藏在"读不到"卡片里） */}
+          <button
+            type="button"
+            onClick={() => setDiagOpen((v) => !v)}
+            aria-expanded={diagOpen}
+            className={[
+              'flex items-center gap-1 rounded-md border px-2 py-[3px] text-2xs transition-colors',
+              diagOpen
+                ? 'border-accent/60 text-accent'
+                : 'border-line text-ink-dim hover:border-accent/50 hover:text-accent',
+            ].join(' ')}
+            title="一键诊断：为什么没有开机性能数据（权限 / 策略 / 快速启动 / 从未记录）"
+          >
+            <Stethoscope size={11} />
+            一键诊断
+          </button>
+
+          {diagOpen && <BootDiagPanel onClose={() => setDiagOpen(false)} />}
         </div>
       </div>
 

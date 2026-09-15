@@ -320,6 +320,19 @@ try {
       assert(deniedErrors.length === 0, `控制台报错：${deniedErrors[0]?.slice(0, 120)}`)
       return '已给出原因与补齐入口'
     })
+
+    /*
+     * ——— 9. 顶栏「一键诊断」常驻入口 ———
+     *
+     * 一键诊断不再只藏在「读不到」卡片里，而是顶栏常驻；
+     * 点击后应弹出诊断面板（内含「开始诊断」按钮）。桌面端真实调用
+     * 会区分权限/策略/快速启动，浏览器模式下走 mock，只断言入口可点开。
+     */
+    await expect('顶栏「一键诊断」可打开面板', async () => {
+      await denied.locator('button', { hasText: '一键诊断' }).first().click()
+      await denied.waitForSelector('text=开始诊断', { timeout: 5000 })
+      return '面板已打开'
+    })
   } finally {
     await denied.close()
   }

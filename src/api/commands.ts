@@ -7,6 +7,15 @@
  */
 import type { BootTimeline, OsInfo, ScanResult, SourceKind, StartupItem } from '@/types/model'
 import type { UpdateCheck } from '@/types/update'
+import type {
+  ApplyOutcome,
+  DryRunOutcome,
+  EditInput,
+  ExportBundle,
+  PlannedAction,
+  RollbackOutcome,
+  SnapshotSummary,
+} from '@/types/snapshot'
 
 /** 检测是否运行在 Tauri 容器内 */
 export const isTauri = (): boolean =>
@@ -219,4 +228,101 @@ export async function enableBootRecord(): Promise<void> {
 export async function cleanInstallCache(): Promise<number> {
   if (!isTauri()) return 0
   return invokeSafe<number>('clean_install_cache')
+}
+
+// ============================================================
+// v0.2.0「可写可控」—— 快照 / 预演 / 应用 / 回滚 / 导出
+// ============================================================
+
+/**
+ * 预演：把若干编辑请求编译成动作清单，**不写系统**。
+ *
+ * 浏览器开发模式没有后端，用 mock 生成与真实渲染形状一致的结果：
+ * 前端可以照常开发预演弹层，接上 Tauri 后自然换真。
+ */
+export async function dryRunEdits(
+  items: StartupItem[],
+  edits: EditInput[],
+): Promise<DryRunOutcome> {
+  if (!isTauri()) {
+    await delay(500)
+    return mockDryRun(items, edits)
+  }
+  return invokeSafe<DryRunOutcome>('dry_run_edits', { items, edits })
+}
+
+/** 应用一批编辑（单改 / 批改共用）。写前建快照，失败自动回滚。 */
+export async function applyEdits(
+  items: StartupItem[],
+  edits: EditInput[],
+): Promise<ApplyOutcome> {
+  if (!isTauri()) {
+    // mock：模拟成功，返回一个伪快照 id
+    await delay(600)
+    return {
+      snapshotId: `mock-${Date.now().toString(36)}`,
+      results: edits.map((e) => ({ itemId: e.itemId, ok: true })),
+      rollbackAvailable: true,
+    }
+  }
+  return invokeSafe<ApplyOutcome>('apply_edits', { items, edits })
+}
+
+/** 列出全部快照（新→旧）。 */
+export async function listSnapshots(): Promise<SnapshotSummary[]> {
+  if (!isTauri()) return []
+  return invokeSafe<SnapshotSummary[]>('list_snapshots')
+}
+
+/** 回滚到某份快照。回滚本身也产生新快照，可再次回滚。 */
+export async function rollbackTo(targetId: string): Promise<RollbackOutcome> {
+  if (!isTauri()) {
+    await delay(500)
+    return { restored: 1, skipped: [], newSnapshotId: `mock-rb-${Date.now().toString()}` }
+  }
+  return invokeSafe<RollbackOutcome>('rollback_to', { targetId })
+}
+
+/** 导出某份快照为独立脚本（PowerShell + .reg）。 */
+export async function exportSnapshot(targetId: string): Promise<ExportBundle> {
+  if (!isTauri()) {
+    return { ps1: '# 浏览器模式无真实快照\n', reg: '' }
+  }
+  return invokeSafe<ExportBundle>('export_snapshot', { targetId })
+}
+
+/* ——— 预演 mock（仅浏览器开发模式） ——— */
+
+function mockDryRun(items: StartupItem[], edits: EditInput[]): DryRunOutcome {
+  const steps: PlannedAction[] = []
+  const denied: string[] = []
+
+  for (const edit of edits) {
+    const item = items.find((i) => i.id === edit.itemId)
+    if (!item) {
+      denied.push(`找不到 id=${edit.itemId} 的启动项（可能已移除，请重新扫描）`)
+      continue
+    }
+    if (item.risk === 'Locked') {
+      denied.push(`「${item.displayName ?? item.name}」系统关键组件，不提供修改入口`)
+      continue
+    }
+    const willChange =
+      edit.enabled !== undefined && edit.enabled !== item.enabled
+    if (willChange) {
+      steps.push({
+        itemId: item.id,
+        displayName: item.displayName ?? item.name,
+        field: 'enabled',
+        before: String(item.enabled),
+        after: String(edit.enabled),
+        consequence: edit.enabled
+          ? '改为「启用」，开机/登录时运行'
+          : '改为「停用」，不再随开机启动（实体保留，可随时恢复）',
+        risk: item.risk,
+      })
+    }
+  }
+
+  return { steps, denied, noop: steps.length === 0 && denied.length === 0 }
 }

@@ -2,9 +2,11 @@ import { useMemo, useState } from 'react'
 import {
   ChevronDown,
   ChevronUp,
+  CircleAlert,
   Copy,
   Download,
   Layers,
+  Play,
   Redo2,
   Trash2,
   Undo2,
@@ -12,8 +14,12 @@ import {
 } from 'lucide-react'
 import { useAppStore } from '@/store/useAppStore'
 import { usePlanStore } from '@/store/usePlanStore'
+import { useSnapshotStore } from '@/store/useSnapshotStore'
 import { CHANGE_LABEL, describeChange, diffRowsOf } from '@/types/plan'
+import type { DryRunOutcome, EditInput } from '@/types/snapshot'
+import { dryRunEdits, applyEdits } from '@/api/commands'
 import { AppIcon } from '@/components/common/Icon'
+import { SnapshotPanel } from '@/components/Plan/SnapshotPanel'
 
 const PLAN_COLOR = '#a371f7'
 
@@ -25,12 +31,10 @@ const PLAN_COLOR = '#a371f7'
  * 可留可不留的。如果每点一下就立即写入系统，他会一直处在"我是不是又改坏了一个"
  * 的不安里，而且没法把一批改动**作为一个整体**来审视。
  *
- * 篮子把"表达意图"和"让意图生效"拆开：编辑期间零风险、随时整体放弃、
- * 还能在动手前先看一眼所有改动的全貌。这一步拆分是后面所有编排能力的地基。
- *
- * 【本版本的边界，界面上必须说清楚】
- * 这里产出的是**方案**（一份可保存的意图清单），不会改动系统。
- * 假装能执行比坦白不能执行更糟——用户会以为改完了，然后发现问题还在。
+ * 篮子把「表达意图」和「让意图生效」拆开：编辑期间零风险、随时整体放弃。
+ * 本版本与过去最大的不同：**底下真的会改系统了**，但前面隔着一道预演闸门——
+ * 点「应用」先看到「将要发生什么」，确认后才执行；执行会建改前快照，
+ * 改完随时可以从快照回滚。每一步都可逆。
  */
 export function ChangeDock() {
   const mode = usePlanStore((s) => s.mode)
@@ -44,9 +48,16 @@ export function ChangeDock() {
   const redoStack = usePlanStore((s) => s.redoStack)
   const items = useAppStore((s) => s.items)
   const setChecked = useAppStore((s) => s.setChecked)
+  const scan = useAppStore((s) => s.scan)
+  const recordApply = useSnapshotStore((s) => s.recordApply)
+  const busy = useSnapshotStore((s) => s.busy)
 
   const [open, setOpen] = useState(false)
   const [flash, setFlash] = useState<string | null>(null)
+  const [preview, setPreview] = useState<DryRunOutcome | null>(null)
+  const [previewError, setPreviewError] = useState<string | null>(null)
+  const [applying, setApplying] = useState(false)
+  const [showSnapshots, setShowSnapshots] = useState(false)
 
   const byId = useMemo(() => new Map(items.map((i) => [i.id, i])), [items])
 
@@ -65,6 +76,21 @@ export function ChangeDock() {
   const say = (msg: string) => {
     setFlash(msg)
     window.setTimeout(() => setFlash((cur) => (cur === msg ? null : cur)), 3200)
+  }
+
+  /** 草稿 → 后端 EditInput 列表（一条只带真正要改的字段） */
+  function editsOf(): EditInput[] {
+    const out: EditInput[] = []
+    for (const id of order) {
+      const entry = entries[id]
+      const item = byId.get(id)
+      if (!entry || !item) continue
+      const edit: EditInput = { itemId: id }
+      if (entry.next.enabled !== undefined) edit.enabled = entry.next.enabled
+      // (delay / priority / order 本版本后端不接受，前端不产生对应字段)
+      out.push(edit)
+    }
+    return out
   }
 
   const buildText = () => usePlanStore.getState().exportPlan(items)
@@ -94,6 +120,41 @@ export function ChangeDock() {
     say(`已保存方案文件（${rows.length} 项）`)
   }
 
+  /** 应用前先预演：把「将要发生什么」摆到用户面前 */
+  const runPreview = async () => {
+    const edits = editsOf()
+    if (edits.length === 0) return
+    setPreviewError(null)
+    try {
+      const outcome = await dryRunEdits(items, edits)
+      setPreview(outcome)
+    } catch (e) {
+      setPreviewError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  /** 预演确认后真正应用。成功后：重扫让清单反映真实状态，清空草稿。 */
+  const runApply = async () => {
+    if (!preview) return
+    setApplying(true)
+    try {
+      const outcome = await applyEdits(items, editsOf())
+      recordApply(outcome)
+      setPreview(null)
+      setOpen(false)
+      clear()
+      setChecked([])
+      say(`已应用（快照 ${outcome.snapshotId.slice(0, 8)}，可在回滚区找回）`)
+      // 写操作已真实发生，重扫刷新现状
+      void scan()
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      setPreviewError(msg)
+    } finally {
+      setApplying(false)
+    }
+  }
+
   // 非编排模式且没有草稿时，这一条完全不该出现——它不属于体检视图
   if (mode === 'inspect' && rows.length === 0) return null
 
@@ -101,6 +162,95 @@ export function ChangeDock() {
 
   return (
     <div className="relative shrink-0">
+      {/* ——— 预演确认弹层 ——— */}
+      {preview && (
+        <div className="absolute inset-x-0 bottom-full z-30 mb-2 max-h-[60vh] overflow-y-auto rounded-lg border border-line bg-panel shadow-float scroll-thin">
+          <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-line-subtle bg-panel/95 px-4 py-2 backdrop-blur">
+            <span className="text-mini text-ink">确认这次修改</span>
+            <span className="tnum text-mini text-ink-dim">{preview.steps.length} 项</span>
+            <div className="flex-1" />
+            <span className="text-2xs text-ink-faint">应用前自动建立改前快照，可随时回滚</span>
+            <button
+              type="button"
+              onClick={() => setPreview(null)}
+              className="text-ink-dim transition-colors hover:text-ink"
+              title="关闭"
+            >
+              <X size={13} />
+            </button>
+          </div>
+
+          <ul className="divide-y divide-line-subtle">
+            {preview.steps.map((a) => (
+              <li key={`${a.itemId}-${a.field}`} className="flex items-start gap-2.5 px-4 py-2">
+                <AppIcon name={a.displayName} size={20} />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5">
+                    <span className="truncate text-mini text-ink">{a.displayName}</span>
+                    <SafeBadge risk={a.risk} />
+                  </div>
+                  <p className="mt-0.5 text-2xs leading-4 text-ink-muted">
+                    <span className="line-through text-ink-faint">{a.before}</span>
+                    <span className="mx-1 text-ink-faint">→</span>
+                    <span style={{ color: PLAN_COLOR }}>{a.after}</span>
+                    <span className="ml-2">{a.consequence}</span>
+                  </p>
+                </div>
+              </li>
+            ))}
+            {preview.denied.length > 0 && (
+              <li className="flex items-start gap-2 px-4 py-2">
+                <CircleAlert size={13} className="mt-1 shrink-0 text-amber-400" />
+                <div className="min-w-0">
+                  <p className="text-2xs text-ink-dim">以下项被护栏拒绝，不会执行：</p>
+                  {preview.denied.map((d) => (
+                    <p key={d} className="mt-0.5 text-2xs leading-4 text-ink-faint">{d}</p>
+                  ))}
+                </div>
+              </li>
+            )}
+            {preview.noop && (
+              <li className="px-4 py-3 text-mini text-ink-faint">
+                没有任何实际变更（目标状态与现状一致）。
+              </li>
+            )}
+          </ul>
+
+          {previewError && (
+            <div className="border-t border-line-subtle px-4 py-2 text-2xs text-danger">
+              {previewError}
+            </div>
+          )}
+
+          <div className="sticky bottom-0 flex items-center gap-2 border-t border-line-subtle bg-panel/95 px-4 py-2 backdrop-blur">
+            <span className="text-2xs text-ink-faint">
+              写操作会立即生效；失败自动回滚，不留「改了一半」。
+            </span>
+            <div className="flex-1" />
+            <button
+              type="button"
+              onClick={() => setPreview(null)}
+              className="rounded border border-line px-3 py-1 text-mini text-ink-muted transition-colors hover:text-ink"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              disabled={applying || preview.steps.length === 0}
+              onClick={() => void runApply()}
+              className="flex items-center gap-1.5 rounded px-3 py-1 text-mini font-medium text-white transition-opacity disabled:opacity-50"
+              style={{ background: PLAN_COLOR }}
+            >
+              <Play size={12} />
+              {applying ? '应用中…' : `应用这 ${preview.steps.length} 项`}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ———— 快照 / 回滚 面板 ———— */}
+      {showSnapshots && <SnapshotPanel onClose={() => setShowSnapshots(false)} />}
+
       {/* ——— 展开的变更列表（向上浮出，不挤压画布） ——— */}
       {open && hasChanges && (
         <div className="absolute inset-x-0 bottom-full max-h-[46vh] animate-slide-up overflow-y-auto border-t border-line bg-panel shadow-float scroll-thin">
@@ -109,11 +259,11 @@ export function ChangeDock() {
             <span className="tnum text-mini text-ink-dim">{rows.length} 项</span>
             <div className="flex-1" />
             <span className="text-2xs text-ink-faint">
-              本版本产出方案，不会改动系统；执行能力将在 v1.5 开放
+              应用前有预演确认 · 执行即建快照
             </span>
             <button
               type="button"
-              onClick={() => setChecked([])}
+              onClick={() => setOpen(false)}
               className="text-ink-dim transition-colors hover:text-ink"
               title="关闭"
             >
@@ -225,6 +375,18 @@ export function ChangeDock() {
               }}
             />
 
+            <span className="mx-0.5 h-3.5 w-px bg-line" />
+
+            <button
+              type="button"
+              onClick={() => void runPreview()}
+              className="flex items-center gap-1 rounded px-2 py-0.5 text-2xs font-medium text-white transition-opacity hover:opacity-80"
+              style={{ background: PLAN_COLOR }}
+            >
+              <Play size={12} />
+              应用
+            </button>
+
             <IconAction
               icon={<Copy size={12} />}
               label="复制方案"
@@ -234,7 +396,7 @@ export function ChangeDock() {
             <IconAction
               icon={<Download size={12} />}
               label="保存方案"
-              hint="导出为 Markdown 文件，含人话清单与机器可读部分"
+              hint="导出为 Markdown 文件"
               onClick={downloadPlan}
             />
           </>
@@ -244,6 +406,19 @@ export function ChangeDock() {
               编排模式：勾选启动项后在右侧调整处置方式，改动会先收在这里
             </span>
             <div className="flex-1" />
+            {busy === 'rollback' && (
+              <span className="animate-pulse text-2xs text-ink-dim">正在回滚…</span>
+            )}
+            <button
+              type="button"
+              onClick={() => setShowSnapshots((v) => !v)}
+              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-2xs text-ink-muted transition-colors hover:bg-hover hover:text-ink"
+              title="历史快照、回滚与导出"
+            >
+              <Layers size={12} />
+              快照与回滚
+            </button>
+            <span className="mx-0.5 h-3.5 w-px bg-line" />
             <span className="text-2xs text-ink-faint">
               空格勾选 · Ctrl+A 全选 · ↑↓ 移动 · Esc 退出编排
             </span>
@@ -251,6 +426,17 @@ export function ChangeDock() {
         )}
       </div>
     </div>
+  )
+}
+
+/** 预演步骤的风险徽章：Locked 之外都淡色处理，避免每行都带红 */
+function SafeBadge({ risk }: { risk: string }) {
+  if (risk !== 'Locked' && risk !== 'High') return null
+  const color = risk === 'Locked' ? '#f85149' : '#d29922'
+  return (
+    <span className="shrink-0 rounded px-1 text-2xs" style={{ color, background: `${color}1f` }}>
+      {risk === 'Locked' ? '禁改区' : '高风险'}
+    </span>
   )
 }
 

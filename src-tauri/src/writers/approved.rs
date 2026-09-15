@@ -85,7 +85,7 @@ fn write_record(machine: bool, sub: &str, name: &str, enabled: bool) -> Result<(
     bytes[0] = if enabled { 0x02 } else { 0x03 };
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as u64)
+        .map(|d| d.as_secs())
         .unwrap_or(0);
     // FILETIME 是 100ns 粒度，这里把秒放进低 4 字节（足够排序 + 人类可读）
     let ft = now.wrapping_mul(10_000_000); // now(s) → 100ns  ticks

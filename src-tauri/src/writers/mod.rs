@@ -9,3 +9,4 @@
 //! 不允许任何 writer 绕过。
 
 pub mod approved;
+pub mod task;

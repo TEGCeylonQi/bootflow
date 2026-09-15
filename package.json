@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.2.0",
   "type": "module",
-  "description": "Windows 启动项编排工具 — 只读体检版",
+  "description": "Windows 启动项编排工具",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",

@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react'
-import { Clock, Loader2, Monitor, RefreshCw, ShieldCheck, ShieldX, SlidersHorizontal, Stethoscope } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { Clock, Loader2, RefreshCw, ShieldCheck, ShieldX, SlidersHorizontal, Stethoscope } from 'lucide-react'
 import { useAppStore } from '@/store/useAppStore'
 import { usePlanStore } from '@/store/usePlanStore'
 import { RISK_META } from '@/constants'
@@ -9,6 +9,7 @@ import { Badge, Dot } from '@/components/common/Badge'
 import { ExportMenu } from '@/components/ExportMenu'
 import { UpdateBadge } from '@/components/Update/UpdateBadge'
 import { BootDiagPanel } from '@/components/Diagnose/BootDiagPanel'
+import { OsInfoChip } from '@/components/TopBarOsChip'
 
 const PLAN_COLOR = '#a371f7'
 
@@ -50,6 +51,16 @@ export function TopBar() {
   const changeCount = usePlanStore((s) => s.order.length)
 
   const [diagOpen, setDiagOpen] = useState(false)
+
+  // 弹层打开时按 Esc 关闭（背板只能靠点击，键盘用户需要这条路）
+  useEffect(() => {
+    if (!diagOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setDiagOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [diagOpen])
 
   const riskCount = useMemo(() => {
     const c: Record<RiskLevel, number> = { Locked: 0, High: 0, Medium: 0, Safe: 0 }
@@ -149,10 +160,7 @@ export function TopBar() {
 
       {/* 环境状态 */}
       <div className="flex items-center gap-2">
-        <Badge color="#8b949e" title="操作系统版本">
-          <Monitor size={11} />
-          {os ? `Windows ${os.major === 10 && os.build >= 22000 ? '11' : '10'} · ${os.build}` : '—'}
-        </Badge>
+        <OsInfoChip os={os} />
 
         <Badge
           color={elevated ? '#3fb950' : '#8b949e'}

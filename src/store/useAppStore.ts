@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { BootTimeline, ItemKind, OsInfo, RiskLevel, StartupItem } from '@/types/model'
-import { getIcons, scanAll, type IconRequest } from '@/api/commands'
+import { getBootTimeline, getIcons, scanAll, type IconRequest } from '@/api/commands'
 import { isSevere, isProblem, resolveKind } from '@/lib/item'
 
 /**
@@ -92,6 +92,12 @@ interface AppState {
   scan: () => Promise<void>
   /** 扫描完成后异步补图标。失败不影响任何东西，界面自行回退兜底图标。 */
   loadIcons: () => Promise<void>
+  /**
+   * 单独重读开机耗时时间轴（顶栏提权后 / 耗时分析页「重新读取」用）。
+   * 扫描与诊断走同一数据源；权限提升后这里能立即看到真实数据，
+   * 不必整窗重扫。
+   */
+  refreshTimeline: () => Promise<void>
   select: (id: string | null) => void
   setQuery: (q: string) => void
   toggleKind: (k: ItemKind) => void
@@ -179,6 +185,16 @@ export const useAppStore = create<AppState>()((set, get) => ({
     } catch (e) {
       // 图标是纯装饰，取不到不该让用户看到错误提示
       console.warn('[BootFlow] 图标提取失败，改用兜底图标', e)
+    }
+  },
+
+  refreshTimeline: async () => {
+    try {
+      const timeline = await getBootTimeline()
+      set({ bootTimeline: timeline })
+    } catch (e) {
+      // 单独刷新失败不应把整个界面拉进 error 态——保留旧值，仅上报
+      console.warn('[BootFlow] 重读开机耗时失败，沿用旧值：', e)
     }
   },
 

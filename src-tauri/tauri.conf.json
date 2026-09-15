@@ -33,7 +33,7 @@
     "publisher": "BootFlow Contributors",
     "copyright": "MIT Licensed",
     "shortDescription": "看清并编排 Windows 开机启动项",
-    "longDescription": "BootFlow 把 Windows 上散落在多处的开机自启机制统一收拢，用可视化方式排序时序、建立依赖，且任何改动都可一键回滚。当前版本只读体检，不写入任何系统配置。",
+    "longDescription": "BootFlow 把 Windows 上散落在多处的开机自启机制统一收拢，用可视化方式排序时序、建立依赖，且任何改动都可一键回滚，回滚有独立脚本兜底。",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

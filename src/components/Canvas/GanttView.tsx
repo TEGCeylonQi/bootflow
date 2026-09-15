@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import ReactECharts from 'echarts-for-react'
-import { Loader2, ShieldAlert } from 'lucide-react'
+import { Loader2, RefreshCw, ShieldAlert } from 'lucide-react'
 import { useAppStore } from '@/store/useAppStore'
 import { PHASE_COLOR, PHASE_LABEL } from '@/constants'
 import {
@@ -158,6 +158,7 @@ function withGaps(phases: PhaseSpan[]): PhaseSpan[] {
 
 export function GanttView(_props: { items: unknown[] }) {
   const bootTimeline = useAppStore((s) => s.bootTimeline)
+  const refreshTimeline = useAppStore((s) => s.refreshTimeline)
 
   const option = useMemo(() => {
     if (!bootTimeline || bootTimeline.phases.length === 0) return null
@@ -374,6 +375,16 @@ export function GanttView(_props: { items: unknown[] }) {
             )}
 
             <BootDiagInline />
+
+            <button
+              type="button"
+              onClick={() => void refreshTimeline()}
+              className="flex items-center gap-1.5 rounded-md border border-line px-2.5 py-1 text-xs text-ink-muted transition-colors hover:bg-hover hover:text-ink"
+              title="重新读一次开机性能日志"
+            >
+              <RefreshCw size={12} />
+              重新读取
+            </button>
           </div>
         </div>
 
@@ -397,6 +408,16 @@ export function GanttView(_props: { items: unknown[] }) {
           <div className="mt-3 text-left">
             <BootRecordGuide />
           </div>
+
+          <button
+            type="button"
+            onClick={() => void refreshTimeline()}
+            className="mt-3 inline-flex items-center gap-1.5 rounded-md border border-line px-2.5 py-1 text-xs text-ink-muted transition-colors hover:bg-hover hover:text-ink"
+            title="重新读一次开机性能日志（提权后点这里立即看到数据）"
+          >
+            <RefreshCw size={12} />
+            重新读取
+          </button>
         </div>
       </div>
     )

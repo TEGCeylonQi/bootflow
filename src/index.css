@@ -10,15 +10,17 @@
      * 根字号：随视口宽度流式缩放，无断点跳变。
      *
      * 桌面端各分辨率都能舒适阅读的甜点区间：
-     *   1280px 宽（1080p 笔记本） → 15px（clamp 下限）
-     *   1920px 宽（1080p 外接）  → 约 16.4px
-     *   2560px 宽（2K）          → 约 17.9px
-     *   ≥ 2880px（4K）           → 18px（clamp 上限）
+     *   1280px 宽（1080p 笔记本） → 16px（clamp 下限）
+     *   1920px 宽（1080p 外接）  → 约 17.6px
+     *   2560px 宽（2K）          → 约 18.8px
+     *   ≥ 3072px（4K）           → 20px（clamp 上限）
      *
      * 组件字号全部走 rem（见 tailwind.config.js 的 fontSize 令牌），
-     * 改这一处即可整盘缩放，各分辨率下载层级关系保持一致。
+     * 改这一处即可整盘缩放，各分辨率下层级关系保持一致。
+     * 16px 为下限，配合下方令牌 2xs/mini/body 的真实 rem 值，
+     * 保证最小字号也不会低于 12px（WebView 对 <12px 文本渲染发糊）。
      */
-    font-size: clamp(15px, 12px + 0.23vw, 18px);
+    font-size: clamp(16px, 13px + 0.24vw, 20px);
 
     /* 自定义属性：滚动条、背景光晕可复用 */
     --scroll-thumb: rgba(139, 148, 158, 0.38);
@@ -41,6 +43,15 @@
     /* 桌面应用观感：禁止文本选择（输入框与 .selectable 除外） */
     user-select: none;
     overflow: hidden;
+
+    /*
+     * WebView2 渲染优化：深色背景 + 小字号最容易出现文字发虚。
+     * 默认的 subpixel 抗锯齿在透明/深色底上会糊，改走灰度抗锯齿。
+     * 高分屏（DPI 缩放）由系统/WebView 层承接，不需要前端自己再放大。
+     */
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
     /*
      * 启动背景：两团极淡的环境光晕（左上偏冷、右下偏紫），
      * 让深色底不是死黑一片，随窗口尺寸自适应铺开。

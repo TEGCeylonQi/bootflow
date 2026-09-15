@@ -156,6 +156,19 @@ pub struct BootPerformanceDiagnosis {
 mod tests {
     use super::*;
 
+    /// 真机探测：打印一次真实诊断的详细结果，用于核对耗时分析页为何显示无数据。
+    /// 读真实系统且断言与机器状态相关 → 标 ignore，真机手动跑（见项目约定）。
+    /// 运行：cargo test --lib probe_real_diag -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn probe_real_diag() {
+        let d = check();
+        println!(
+            "PROBE verdict={} | count={} | switch={} | last_boot={:?} | needs_elevation={}",
+            d.verdict, d.record_count, d.record_switch, d.last_boot_at, d.needs_elevation
+        );
+    }
+
     #[test]
     fn allowed_but_no_events_is_benign() {
         let d = BootPerformanceDiagnosis {

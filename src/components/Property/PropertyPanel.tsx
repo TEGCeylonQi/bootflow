@@ -18,12 +18,12 @@ import { OrchestrationBlock } from './OrchestrationBlock'
  *
  * 分层原则：
  *   第一层（默认可见）→ 用户决策所需的一切：这是什么、谁做的、有没有问题
- *   第二层（默认折叠）→ 排查与审计所需的一切：路径、命令行、注册位置、证书、原始诊断码
+ *   第二层（默认展开）→ 排查与审计所需的一切：路径、命令行、注册位置、证书、原始诊断码
  *
  * 判据很简单：**一个不懂 HKLM 是什么的人，也应该能只看第一层就做出判断。**
  *
- * 编排设置默认展开：用户切到编排模式，就是为了来改这一项。
- * 让他再点一次折叠标题才看到控件，是多此一举。
+ * 二级区块默认展开：多数时候技术详情的「程序位置 / 命令行」正是要核对的内容，
+ * 信息密度大于折叠省出的留白，多一次点击都是摩擦。
  */
 export function PropertyPanel() {
   const items = useAppStore((s) => s.items)
@@ -94,7 +94,7 @@ export function PropertyPanel() {
         <AttentionBlock item={item} />
 
         {/* ——— 二级：技术详情 ——— */}
-        <Collapsible title="技术详情" hint="路径与参数">
+        <Collapsible title="技术详情" hint="路径与参数" defaultOpen>
           <Field label="启动方式" labelWidth="w-16">
             {SOURCE_PLAIN[item.source]}
           </Field>
@@ -132,13 +132,13 @@ export function PropertyPanel() {
         </Collapsible>
 
         {/* ——— 二级：数字签名 ——— */}
-        <Collapsible title="发布者与签名" hint="核验身份">
+        <Collapsible title="发布者与签名" hint="核验身份" defaultOpen>
           <SignerBlock signer={item.signer} />
         </Collapsible>
 
         {/* ——— 二级：补充说明（不构成问题，但值得一提）——— */}
         {notes.length > 0 && (
-          <Collapsible title="补充说明" hint={`${notes.length} 条`}>
+          <Collapsible title="补充说明" hint={`${notes.length} 条`} defaultOpen>
             <DiagnosticsBlock items={notes} />
           </Collapsible>
         )}
@@ -147,13 +147,13 @@ export function PropertyPanel() {
         <Collapsible
           title="编排设置"
           hint={inPlan ? '已编排' : mode === 'orchestrate' ? '可调整' : 'v1.5 起开放'}
-          defaultOpen={mode === 'orchestrate'}
+          defaultOpen
         >
           <OrchestrationBlock item={item} />
         </Collapsible>
 
         {/* ——— 编排：尚未开放的部分，提前告知边界 ——— */}
-        <Collapsible title="后续能力" hint="v2.0">
+        <Collapsible title="后续能力" hint="v2.0" defaultOpen>
           <FutureFields desired={item.desired} />
         </Collapsible>
       </div>

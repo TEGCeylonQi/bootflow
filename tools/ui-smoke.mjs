@@ -331,7 +331,28 @@ try {
     await expect('顶栏「一键诊断」可打开面板', async () => {
       await denied.locator('button', { hasText: '一键诊断' }).first().click()
       await denied.waitForSelector('text=开始诊断', { timeout: 5000 })
-      return '面板已打开'
+      // 弹层开着会留一个全屏背板，挡住后续点击 → 断言完立刻按 Esc 关掉
+      await denied.keyboard.press('Escape')
+      await denied.waitForTimeout(200)
+      return '面板已打开并关闭'
+    })
+
+    /*
+     * ——— 10. 顶栏 Windows 版本徽标可点开详情 ———
+     *
+     * 标题常常是一行字（Windows 11 · 26200），点开后应展开详情浮层，
+     * 内含「构建」「产品」字段。浏览器 mock 走 OsInfo 数据。
+     */
+    await expect('顶栏 Win 版本可点开详情', async () => {
+      const chip = denied.locator('button[title*="系统版本详情"]')
+      assert((await chip.count()) > 0, '没找到 Win 版本按钮')
+      await chip.first().click()
+      await denied.waitForSelector('text=构建', { timeout: 5000 })
+      await denied.waitForSelector('text=产品', { timeout: 5000 })
+      // 断言完顺手关掉浮层，避免背板残留影响后续
+      await denied.keyboard.press('Escape')
+      await denied.waitForTimeout(200)
+      return '浮层已展示并关闭'
     })
   } finally {
     await denied.close()

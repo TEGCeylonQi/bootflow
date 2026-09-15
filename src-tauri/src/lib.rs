@@ -56,6 +56,9 @@ pub fn run() {
             commands::enable_boot_record,
             commands::install_update,
             commands::clean_install_cache,
+            // v0.2.0 可写可控
+            commands::dry_run_edits,
+            commands::apply_edits,
         ])
         .run(tauri::generate_context!())
         .expect("BootFlow 启动失败");

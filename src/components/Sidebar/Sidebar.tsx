@@ -92,17 +92,13 @@ function EmptyState({ total }: { total: number }) {
 
 function SkeletonList() {
   return (
-    <div className="space-y-2 p-3">
+    <div className="space-y-2 p-3" aria-hidden="true">
       {Array.from({ length: 10 }).map((_, i) => (
-        <div
-          key={i}
-          className="pulse-soft flex items-center gap-2"
-          style={{ animationDelay: `${i * 90}ms` }}
-        >
-          <div className="h-[22px] w-[22px] rounded bg-hover" />
+        <div key={i} className="flex items-center gap-2">
+          <div className="skeleton h-[22px] w-[22px]" />
           <div className="flex-1 space-y-1">
-            <div className="h-3 rounded bg-hover" style={{ width: `${50 + ((i * 13) % 40)}%` }} />
-            <div className="h-2.5 rounded bg-hover/70" style={{ width: `${30 + ((i * 7) % 30)}%` }} />
+            <div className="skeleton h-3" style={{ width: `${50 + ((i * 13) % 40)}%` }} />
+            <div className="skeleton h-2.5" style={{ width: `${30 + ((i * 7) % 30)}%` }} />
           </div>
         </div>
       ))}

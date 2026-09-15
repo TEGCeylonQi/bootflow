@@ -71,11 +71,11 @@ export default function App() {
   }, [checkUpdate])
 
   return (
-    <div className="grid h-full grid-rows-[48px_minmax(0,1fr)_auto] overflow-hidden bg-base">
+    <div className="app-enter grid h-full grid-rows-[48px_minmax(0,1fr)_auto] overflow-hidden bg-base">
       <TopBar />
 
       <div
-        className="grid min-h-0"
+        className="appear grid min-h-0"
         style={{
           gridTemplateColumns: `${sidebarWidth}px 5px minmax(0,1fr) 5px ${propertyWidth}px`,
         }}

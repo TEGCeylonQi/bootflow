@@ -5,6 +5,28 @@
 @layer base {
   :root {
     color-scheme: dark;
+
+    /*
+     * 根字号：随视口宽度流式缩放，无断点跳变。
+     *
+     * 桌面端各分辨率都能舒适阅读的甜点区间：
+     *   1280px 宽（1080p 笔记本） → 15px（clamp 下限）
+     *   1920px 宽（1080p 外接）  → 约 16.4px
+     *   2560px 宽（2K）          → 约 17.9px
+     *   ≥ 2880px（4K）           → 18px（clamp 上限）
+     *
+     * 组件字号全部走 rem（见 tailwind.config.js 的 fontSize 令牌），
+     * 改这一处即可整盘缩放，各分辨率下载层级关系保持一致。
+     */
+    font-size: clamp(15px, 12px + 0.23vw, 18px);
+
+    /* 自定义属性：滚动条、背景光晕可复用 */
+    --scroll-thumb: rgba(139, 148, 158, 0.38);
+    --scroll-thumb-hover: rgba(139, 148, 158, 0.66);
+    --scroll-thumb-active: rgba(139, 148, 158, 0.82);
+    --halo-1: rgba(88, 166, 255, 0.09);
+    --halo-2: rgba(163, 113, 247, 0.08);
+    --halo-3: rgba(63, 185, 80, 0.05);
   }
 
   html,
@@ -19,6 +41,15 @@
     /* 桌面应用观感：禁止文本选择（输入框与 .selectable 除外） */
     user-select: none;
     overflow: hidden;
+    /*
+     * 启动背景：两团极淡的环境光晕（左上偏冷、右下偏紫），
+     * 让深色底不是死黑一片，随窗口尺寸自适应铺开。
+     * 叠在 bg-base 之上，几乎不可见，但让"暗"有了层次。
+     */
+    background-image:
+      radial-gradient(1200px 800px at 82% -10%, var(--halo-1), transparent 60%),
+      radial-gradient(1000px 700px at 110% 110%, var(--halo-2), transparent 62%),
+      radial-gradient(900px 620px at 46% 118%, var(--halo-3), transparent 60%);
   }
 
   input,
@@ -51,24 +82,33 @@
 }
 
 @layer utilities {
-  /* 细滚动条，贴合深色面板 */
-  .scroll-thin {
+  /* 全局滚动条：细、圆角、半透明，悬停/拖拽时变亮。 */
+  * {
     scrollbar-width: thin;
-    scrollbar-color: #30363d transparent;
+    scrollbar-color: var(--scroll-thumb) transparent;
   }
-  .scroll-thin::-webkit-scrollbar {
+  *::-webkit-scrollbar {
     width: 8px;
     height: 8px;
   }
-  .scroll-thin::-webkit-scrollbar-track {
+  *::-webkit-scrollbar-track {
     background: transparent;
   }
-  .scroll-thin::-webkit-scrollbar-thumb {
-    background-color: #30363d;
-    border-radius: 4px;
+  *::-webkit-scrollbar-thumb {
+    background-color: var(--scroll-thumb);
+    border-radius: 999px;
+    border: 1px solid transparent;
+    background-clip: padding-box;
+    transition: background-color 120ms ease;
   }
-  .scroll-thin::-webkit-scrollbar-thumb:hover {
-    background-color: #484f58;
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: var(--scroll-thumb-hover);
+  }
+  *::-webkit-scrollbar-thumb:active {
+    background-color: var(--scroll-thumb-active);
+  }
+  *::-webkit-scrollbar-corner {
+    background: transparent;
   }
 
   /* 面板毛玻璃背板 */
@@ -77,17 +117,61 @@
     background-color: rgba(22, 27, 34, 0.72);
   }
 
-  /* 骨架屏脉冲 */
-  .pulse-soft {
-    animation: pulse-soft 1.8s ease-in-out infinite;
+  /* 骨架屏扫光（替代脉冲呼吸：从"变暗变亮"升级为"光带从左到右扫过"） */
+  .skeleton {
+    position: relative;
+    overflow: hidden;
+    background-color: #21262d;
+    border-radius: 4px;
   }
-  @keyframes pulse-soft {
-    0%,
+  .skeleton::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgba(230, 237, 243, 0.07),
+      rgba(230, 237, 243, 0.12),
+      rgba(230, 237, 243, 0.07),
+      transparent
+    );
+    animation: skeleton-sweep 1.5s ease-in-out infinite;
+  }
+  @keyframes skeleton-sweep {
     100% {
-      opacity: 0.35;
+      transform: translateX(100%);
     }
-    50% {
-      opacity: 0.7;
+  }
+
+  /* 启动时整窗淡入：1s 渐显，配合背景光晕一起"亮起来" */
+  .app-enter {
+    animation: app-fade-in 600ms ease-out both;
+  }
+  @keyframes app-fade-in {
+    from {
+      opacity: 0;
+      transform: scale(0.995);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  /* 面板/卡片出现：轻微上移 + 淡入（与既有 slide-up 区分节奏） */
+  .appear {
+    animation: appear-in 320ms cubic-bezier(0.2, 0, 0, 1) both;
+  }
+  @keyframes appear-in {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
     }
   }
 

@@ -260,7 +260,7 @@ Windows 本身不为每个自启动项记录独立耗时。任何声称能精确
 | 版本 | 内容 | 原则 |
 | --- | --- | --- |
 | **v1.0** | 只读体检：全来源发现 + 诊断 + 报告 | 零风险，先建立信任 |
-| **v1.5** | 启用/禁用开关、变更前快照、Dry-run 预演、一键回滚 | 任何写操作都可逆 |
+| **v1.5** | 启用/禁用开关、**新建启动项**（从本机已装应用里选，自动避开已有项）、变更前快照、Dry-run 预演、一键回滚 | 任何写操作都可逆 |
 | **v2.0** | 可视化编排：泳道拖拽、依赖图、分级延迟 | 从「管理单个项」到「编排整体时序」 |
 | **v2.5** | 调度引擎：就绪探针、DAG 执行、编译器 | 让编排真正生效 |
 | **v3.0** | IO 感知调度、一键优化建议、场景预设 | 软件替用户做决策 |
@@ -286,6 +286,32 @@ cargo test
 
 CI 在 `.github/workflows/ci.yml`：前端跑在 Linux，Rust 跑在 `windows-latest`
 ——这些测试要读真实的 Windows，所以不能放在 Linux runner 上。
+
+## 发布新版本
+
+发布由 tag 触发。**不需要在本地构建，也不需要在网页上手动传文件。**
+
+```bash
+# 1. 改 src-tauri/tauri.conf.json 的 version 字段（只需要改这一处）
+
+# 2. 提交
+git commit -am "chore: 版本号 0.2.0"
+git push origin main
+
+# 3. 打 tag 并推送（tag 名必须以 v 开头）
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+之后 `.github/workflows/release.yml` 会自动编译、创建 Release、上传两个产物：
+
+- `BootFlow_0.2.0_x64-setup.exe` — NSIS 安装包，用户级安装，不需要管理员权限
+- `bootflow-portable-x64.zip` — 便携版，解压即用
+
+发布前请确认：clippy 无警告、`cargo test` 全绿、`npm run check` 与 `npm run ui:smoke` 通过、
+版本号已改，并且**没有把本机相关信息带进提交**（提交信息、示例数据、截图、代码注释都要看一眼）。
+
+用 tag 触发而不是「推 main 就发版」是有意的：发布会被别人下载到，应当是一个明确的动作。
 
 ## 许可
 

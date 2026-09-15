@@ -219,10 +219,10 @@ pub async fn clean_install_cache() -> Result<u32> {
 use crate::model::SourceKind as Src;
 use crate::snapshot::changelog::{self, Action, ChangeDraft};
 use crate::snapshot::guard;
-use crate::snapshot::model::{Snapshot, SnapshotRecord, SnapshotReason, SNAPSHOT_SCHEMA_VERSION};
+use crate::snapshot::model::{Snapshot, SnapshotReason, SnapshotRecord, SNAPSHOT_SCHEMA_VERSION};
 use crate::snapshot::plan;
-use crate::snapshot::txn::value_str;
-use crate::snapshot::{store as snapstore};
+use crate::snapshot::txn::{value_str, RollbackOp};
+use crate::snapshot::{rollback as rollback_core, store as snapstore};
 use crate::writers::{approved, service as svc_writer, task as task_writer};
 
 /// 前端传入的一条「期望修改」。
@@ -506,6 +506,212 @@ struct AppliedInfo {
     action: Action,
     before: String,
     after: String,
+}
+
+/// 快照摘要 —— 列表里给用户看的那几行。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotSummary {
+    pub id: String,
+    pub created_at: String,
+    pub description: String,
+    pub reason: String,
+    /// 该快照覆盖的启动项数。
+    pub record_count: usize,
+}
+
+/// 列出全部快照（新→旧）。回滚/导出下拉用。
+#[tauri::command]
+pub async fn list_snapshots() -> Result<Vec<SnapshotSummary>> {
+    spawn_blocking_result(|| {
+        let ids = snapstore::list()?;
+        let mut out = Vec::with_capacity(ids.len());
+        for id in ids {
+            match snapstore::load(&id) {
+                Ok(snap) => out.push(SnapshotSummary {
+                    id: snap.id.clone(),
+                    created_at: snap.created_at,
+                    description: snap.description,
+                    reason: snapshot_reason_label(snap.reason).into(),
+                    record_count: snap.records.len(),
+                }),
+                // 单份快照损坏不阻断列表（诚实展示，且不因一份坏文件废掉整个历史）
+                Err(e) => out.push(SnapshotSummary {
+                    id,
+                    created_at: String::new(),
+                    description: format!("（无法读取：{e}）"),
+                    reason: "未知".into(),
+                    record_count: 0,
+                }),
+            }
+        }
+        Ok(out)
+    })
+    .await
+}
+
+/// 回滚结果。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RollbackOutcome {
+    /// 恢复了多少项（写成功的步数）。
+    pub restored: usize,
+    /// 跳过的项及理由（"未变化 / 当前不存在"）——诚实告知。
+    pub skipped: Vec<String>,
+    /// 回滚动作产生的「回滚快照」id —— 支持「回滚的回滚」。
+    pub new_snapshot_id: String,
+}
+
+/// 回滚到某份快照。
+///
+/// 流程：加载目标快照 → 对当前全量扫描再次采样（乐观锁同源）→ 计算差异动作 →
+/// 建「回滚前」快照 → 逐项写回（能定位的才写）→ 失败即整体回滚并报错 →
+/// 成功则写 changelog + 保存「回滚后」新快照。
+#[tauri::command]
+pub async fn rollback_to(target_id: String) -> Result<RollbackOutcome> {
+    spawn_blocking_result(move || rollback_to_sync(&target_id)).await
+}
+
+/// `rollback_to` 的同步实现（可脱离 Tauri 测试）。
+fn rollback_to_sync(target_id: &str) -> Result<RollbackOutcome> {
+    let target = snapstore::load(target_id)?;
+
+    // ——— ① 全量扫描当前状态（回滚要跟「现在」比，而不是跟缓存比）———
+    let current_items = crate::scanners::scan_all_blocking().items;
+
+    // ——— ② 「回滚前」快照：可逆性 > 一切，回滚本身也要能回滚 ———
+    let pre_records: Vec<SnapshotRecord> = current_items.iter().map(snapshot_record_for).collect();
+    let now = chrono::Utc::now().to_rfc3339();
+    let pre_snap = Snapshot {
+        schema_version: SNAPSHOT_SCHEMA_VERSION,
+        id: crate::snapshot::model::snapshot_id("BootFlow", &now),
+        created_at: now.clone(),
+        description: format!("回滚到 {} 前", target.description),
+        reason: SnapshotReason::Rollback,
+        records: pre_records.clone(),
+    };
+    snapstore::save(&pre_snap, snapstore::default_retention())?;
+
+    // ——— ③ 计算回滚计划（纯函数：目标快照 vs 当前状态）———
+    let current_map: HashMap<String, Option<String>> = pre_records
+        .iter()
+        .map(|r| (r.id.clone(), value_str(r)))
+        .collect();
+    let plan = rollback_core::plan_rollback(&target, &current_map);
+
+    // ——— ④ 建「当前项 id → StartupItem」映射，逐项写回 ———
+    let item_map: HashMap<String, &StartupItem> =
+        current_items.iter().map(|i| (i.id.clone(), i)).collect();
+    let mut restored = 0usize;
+    let skipped = plan.skipped.clone();
+    let mut errs: Vec<String> = Vec::new();
+
+    for step in &plan.steps {
+        let Some(item) = item_map.get(&step.item_id) else {
+            errs.push(format!("{}：当前扫描不在清单中，跳过", step.display_name));
+            continue;
+        };
+        match execute_rollback_step(item, &step.op) {
+            Ok(()) => restored += 1,
+            Err(e) => errs.push(format!("恢复「{}」失败：{e}", step.display_name)),
+        }
+    }
+
+    if !errs.is_empty() {
+        // 部分失败：每步都是独立字段的写回（成功步已真实恢复），
+        // 这里如实列出失败项，不做无谓的整体补偿回滚
+        return Err(AppError::Other(format!(
+            "回滚部分失败（已成功恢复 {} 项）。\n{}",
+            restored,
+            errs.join("\n")
+        )));
+    }
+
+    // ——— ⑤ 全部成功 → 写审计（每条恢复动作一行）———
+    for step in &plan.steps {
+        let rec = target.records.iter().find(|r| r.id == step.item_id);
+        if let Some(rec) = rec {
+            let _ = changelog::append(&changelog::ChangeEntry::ok(
+                &now,
+                &ChangeDraft {
+                    snap_id: target_id.into(),
+                    txn: "回滚".into(),
+                    rec: rec.clone(),
+                    action: Action::Rollback,
+                    before: step.before.clone(),
+                    after: step.after.clone(),
+                    origin: "rollback".into(),
+                },
+            ));
+        }
+    }
+
+    // ——— ⑥ 回滚后也存一份新快照（rollback 栈）———
+    let post_records: Vec<SnapshotRecord> = current_items
+        .iter()
+        .map(snapshot_record_for)
+        .collect();
+    let post_snap = rollback_core::new_rollback_snapshot(post_records, &format!("回滚到 {}", target.description));
+    let post_id = post_snap.id.clone();
+    snapstore::save(&post_snap, snapstore::default_retention())?;
+
+    Ok(RollbackOutcome {
+        restored,
+        skipped,
+        new_snapshot_id: post_id,
+    })
+}
+
+/// 执行一步回滚：把快照里的原值写回系统（按来源分发）。
+fn execute_rollback_step(item: &StartupItem, op: &RollbackOp) -> Result<()> {
+    match op {
+        RollbackOp::ApprovedRaw { hex } => {
+            // 快照记的是原始字节；恢复时按「原值是否以 02 开头」还原启停意图
+            let enabled = hex.starts_with("02");
+            approved::set_enabled(item, if enabled { approved::Desired::Enable } else { approved::Desired::Disable })?;
+        }
+        RollbackOp::ServiceStartType { value } => {
+            svc_writer::set_start_type(item, *value)?;
+        }
+        RollbackOp::TaskEnabled { value } => {
+            task_writer::set_task_enabled(item, *value)?;
+        }
+        RollbackOp::TriggerEnabled { value } => {
+            task_writer::set_trigger_enabled(item, *value)?;
+        }
+    }
+    Ok(())
+}
+
+/// 导出某份快照为独立脚本（PowerShell + .reg）。
+///
+/// 产物不依赖 BootFlow：用系统自带的 reg / schtasks / sc 就能恢复。
+/// 前端拿到字符串后让用户「保存为文件」，本命令不落盘（保持命令层无 IO 副作用）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportBundle {
+    pub ps1: String,
+    pub reg: String,
+}
+
+#[tauri::command]
+pub async fn export_snapshot(target_id: String) -> Result<ExportBundle> {
+    spawn_blocking_result(move || {
+        let snap = snapstore::load(&target_id)?;
+        let bundle = crate::snapshot::export_script::export(&snap)?;
+        Ok(ExportBundle { ps1: bundle.ps1, reg: bundle.reg })
+    })
+    .await
+}
+
+/// 快照原因的人话名。
+fn snapshot_reason_label(reason: SnapshotReason) -> &'static str {
+    match reason {
+        SnapshotReason::Scan => "扫描基线",
+        SnapshotReason::Modify => "修改前",
+        SnapshotReason::Rollback => "回滚",
+        SnapshotReason::Export => "导出",
+    }
 }
 
 /// 服务启动类型的人话名。

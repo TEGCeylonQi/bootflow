@@ -29,6 +29,10 @@ export function useBootDiag() {
   // 「耗时页有图」永远是同一次读取的结果，不会出现"诊断 64 条、
   // 耗时页却空白"这种不一致。
   const setTimeline = useAppStore((s) => s.setBootTimeline)
+  // 自记账那条通路与事件日志无关（读本地文件、不用提权）。
+  // 诊断往往正是用户"发现耗时页空着"之后点的动作，顺手把它一起刷新，
+  // 免得用户以为诊断完还是什么都没有。
+  const refreshBootRecords = useAppStore((s) => s.refreshBootRecords)
 
   const run = async () => {
     setState('checking')
@@ -39,6 +43,7 @@ export function useBootDiag() {
       setDiag(d)
       setState('done')
       if (d.timeline) setTimeline(d.timeline)
+      void refreshBootRecords()
     } catch (e) {
       setMsg(e instanceof Error ? e.message : String(e))
       setState('error')

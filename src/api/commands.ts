@@ -5,7 +5,14 @@
  * 这样前端可以完全脱离 Rust 独立开发与预览；一旦运行在 Tauri 容器里
  * (`__TAURI_INTERNALS__` 存在) 则走真实 invoke。
  */
-import type { BootTimeline, OsInfo, ScanResult, SourceKind, StartupItem } from '@/types/model'
+import type {
+  BootRecord,
+  BootTimeline,
+  OsInfo,
+  ScanResult,
+  SourceKind,
+  StartupItem,
+} from '@/types/model'
 import type { UpdateCheck } from '@/types/update'
 import type {
   ApplyOutcome,
@@ -69,6 +76,21 @@ export async function getBootTimeline(): Promise<BootTimeline> {
     return structuredClone(data.bootTimeline)
   }
   return invokeSafe<BootTimeline>('get_boot_timeline')
+}
+
+/**
+ * 「开机自记账」记录列表（旧 → 新）。
+ *
+ * 与 `getBootTimeline` 是**两条独立通路**：那条读系统事件日志（要提权、还只在
+ * 慢启动时才有数据），这条读 BootFlow 自己在 `%LOCALAPPDATA%` 下写的文件，
+ * 普通权限就能读到，且每次开机必有一条。
+ */
+export async function getBootRecords(): Promise<BootRecord[]> {
+  if (!isTauri()) {
+    const { MOCK_BOOT_RECORDS } = await import('@/mock/mockData')
+    return structuredClone(MOCK_BOOT_RECORDS)
+  }
+  return invokeSafe<BootRecord[]>('get_boot_records')
 }
 
 export async function getOsInfo(): Promise<OsInfo> {

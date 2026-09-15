@@ -251,6 +251,23 @@ try {
     return '口径正确'
   })
 
+  /*
+   * ——— 4b. 自记账趋势 ———
+   *
+   * 新增的核心能力：Windows 的 Event 100 只在「完整引导 + 开机偏慢」时才写，
+   * 开了快速启动的机器可以几个月一条都没有（实测某台 403 天零记录）。
+   * 自记账在每次登录时由自启条目静默写一条，不依赖提权、不依赖任何系统策略。
+   *
+   * 这里断言三件事：图在、来源标清楚了、**边界也写清楚了**（它只有总时长，
+   * 拿不到分段）。少最后一条，就是在拿"总时长"冒充"详细耗时"。
+   */
+  await expect('耗时分析给出「最近几次开机」自记账趋势', async () => {
+    assert((await page.locator('text=最近几次开机用时').count()) > 0, '没有自记账趋势区')
+    assert((await page.locator('text=BootFlow 自记账').count()) > 0, '没有标明数据来自自记账')
+    assert((await page.locator('text=那需要系统事件日志').count()) > 0, '没有说明它拿不到分段耗时')
+    return '自记账趋势已展示'
+  })
+
   await expect('导出报告菜单提供三种格式', async () => {
     await page.locator('button', { hasText: '导出报告' }).first().click()
     await page.waitForSelector('text=Markdown 报告', { timeout: 5000 })
@@ -311,11 +328,21 @@ try {
       assert((await denied.locator('text=这不影响上面列的启动项').count()) > 0, '没有说明其余数据不受影响')
       assert((await denied.locator('text=打开系统诊断日志查看').count()) > 0, '没有给出补齐数据的入口')
 
-      // 开机记录引导：卡片存在，且点击后给出诚实说明（系统默认允许、快速启动不记录）
-      const guide = denied.locator('text=Windows 默认不记录每次开机的耗时')
-      assert((await guide.count()) > 0, '没有「开机记录引导」卡片')
-      await denied.locator('button', { hasText: '查看能否开启' }).first().click()
+      // 系统记录开关：卡片存在，且点击后给出诚实说明（系统默认允许、快速启动不记录）
+      const guide = denied.locator('text=那要靠系统记录')
+      assert((await guide.count()) > 0, '没有「系统记录开关」卡片')
+      await denied.locator('button', { hasText: '检查系统记录开关' }).first().click()
       await denied.waitForSelector('text=完整重启', { timeout: 5000 })
+
+      /*
+       * 关键：**读不到系统日志 ≠ 什么都看不到**。
+       * 自记账这条通路不用提权，所以它必须在「读不到」分支里照常出现——
+       * 否则用户会以为"没权限 = 永远空白"，正是这次要填掉的那个洞。
+       */
+      assert(
+        (await denied.locator('text=最近几次开机用时').count()) > 0,
+        '读不到系统日志时没有回退到自记账数据',
+      )
 
       assert(deniedErrors.length === 0, `控制台报错：${deniedErrors[0]?.slice(0, 120)}`)
       return '已给出原因与补齐入口'

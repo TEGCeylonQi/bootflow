@@ -30,6 +30,7 @@
 //! 对用户的伤害完全不是一个量级。
 
 pub mod boot_log;
+pub mod boot_marker;
 pub mod boot_record;
 pub mod boot_verdict;
 pub mod codes;

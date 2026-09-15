@@ -183,6 +183,15 @@ const CONTRACTS = [
     rs: join(ROOT, 'src-tauri', 'src', 'update.rs'),
     structs: ['UpdateCheck', 'ReleaseAsset'],
   },
+  {
+    // 自记账记录。Rust 侧的 `BootRecordEntry` 刻意不叫 `BootRecord`——
+    // `boot_record.rs` 里已有「系统记录开关」那套概念，同名会让两件事看起来是一件。
+    // 所以这里用 { ts, rs } 形式显式声明两侧的名字。
+    label: 'boot-records',
+    ts: join(SRC, 'types', 'model.ts'),
+    rs: join(ROOT, 'src-tauri', 'src', 'diag', 'boot_marker.rs'),
+    structs: [{ ts: 'BootRecord', rs: 'BootRecordEntry' }],
+  },
 ]
 
 const contractDiffs = []
@@ -202,18 +211,22 @@ for (const contract of CONTRACTS) {
 
   contractPairsChecked += 1
 
-  for (const name of contract.structs) {
-    const ts = tsInterfaceFields(tsSrc, name)
-    const rs = rustStructFields(rsSrc, name)
+  for (const spec of contract.structs) {
+    // 字符串 = 两侧同名；{ ts, rs } = 两侧名字不同（Rust 侧名字更精确时用）
+    const tsName = typeof spec === 'string' ? spec : spec.ts
+    const rsName = typeof spec === 'string' ? spec : spec.rs
+
+    const ts = tsInterfaceFields(tsSrc, tsName)
+    const rs = rustStructFields(rsSrc, rsName)
     if (!ts || !rs) continue
     contractStructCount += 1
     const tsSet = new Set(ts)
     const rsSet = new Set(rs)
     for (const f of ts) {
-      if (!rsSet.has(f)) contractDiffs.push(`[${contract.label}] ${name}.${f} 只存在于 TS`)
+      if (!rsSet.has(f)) contractDiffs.push(`[${contract.label}] ${rsName}.${f} 只存在于 TS`)
     }
     for (const f of rs) {
-      if (!tsSet.has(f)) contractDiffs.push(`[${contract.label}] ${name}.${f} 只存在于 Rust`)
+      if (!tsSet.has(f)) contractDiffs.push(`[${contract.label}] ${rsName}.${f} 只存在于 Rust`)
     }
   }
 }

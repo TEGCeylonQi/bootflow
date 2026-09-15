@@ -1,6 +1,12 @@
 import { create } from 'zustand'
-import type { BootTimeline, ItemKind, OsInfo, RiskLevel, StartupItem } from '@/types/model'
-import { getBootTimeline, getIcons, scanAll, type IconRequest } from '@/api/commands'
+import type { BootRecord, BootTimeline, ItemKind, OsInfo, RiskLevel, StartupItem } from '@/types/model'
+import {
+  getBootRecords,
+  getBootTimeline,
+  getIcons,
+  scanAll,
+  type IconRequest,
+} from '@/api/commands'
 import { isSevere, isProblem, resolveKind } from '@/lib/item'
 
 /**
@@ -49,6 +55,15 @@ interface AppState {
   elevated: boolean
   scannedAt: string | null
   bootTimeline: BootTimeline | null
+  /**
+   * 「开机自记账」记录（旧 → 新）。
+   *
+   * 与 `bootTimeline` 是两条独立数据通路，两者**不是二选一**：
+   * `bootTimeline` 来自系统事件日志（要提权、且只在慢启动时才有），
+   * 这里来自 BootFlow 自己写的文件（普通权限、每次开机必有一条）。
+   * 界面按「有分段用分段，没分段用总时长」的组合来展示。
+   */
+  bootRecords: BootRecord[]
   /** 各来源可容忍的部分失败 */
   errors: string[]
   status: ScanStatus
@@ -106,6 +121,13 @@ interface AppState {
    * 反映与诊断同一个读取结果，不需要前端再调一次 `get_boot_timeline`。
    */
   setBootTimeline: (t: BootTimeline) => void
+  /**
+   * 重读「开机自记账」记录。
+   *
+   * 独立于 `refreshTimeline`：这条通路**不需要提权**，所以扫描时就该顺带拉一次，
+   * 提权后也不必重读它。分开的理由是失败域不同——一个失败不该牵连另一个。
+   */
+  refreshBootRecords: () => Promise<void>
   select: (id: string | null) => void
   setQuery: (q: string) => void
   toggleKind: (k: ItemKind) => void
@@ -127,6 +149,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
   elevated: false,
   scannedAt: null,
   bootTimeline: null,
+  bootRecords: [],
   errors: [],
   status: 'idle',
   errorMsg: null,
@@ -146,13 +169,19 @@ export const useAppStore = create<AppState>()((set, get) => ({
   scan: async () => {
     set({ status: 'scanning', errorMsg: null })
     try {
-      const result = await scanAll()
+      // 自记账只是想读一个本地 JSON，和扫描并行即可。
+      // 单独 catch 成空数组：读不到它不该把整次扫描拉进 error 态。
+      const [result, records] = await Promise.all([
+        scanAll(),
+        getBootRecords().catch(() => [] as BootRecord[]),
+      ])
       set({
         items: result.items,
         os: result.os,
         elevated: result.elevated,
         scannedAt: result.scannedAt,
         bootTimeline: result.bootTimeline,
+        bootRecords: records,
         errors: result.errors,
         status: 'ready',
         // 首次扫描后自动定位到最严重的一项，让用户开屏就能看到诊断结论长什么样。
@@ -207,6 +236,16 @@ export const useAppStore = create<AppState>()((set, get) => ({
   },
 
   setBootTimeline: (timeline) => set({ bootTimeline: timeline }),
+
+  refreshBootRecords: async () => {
+    try {
+      const records = await getBootRecords()
+      set({ bootRecords: records })
+    } catch (e) {
+      // 与 refreshTimeline 同理：单独一条通路失败不该清空界面，保留旧值并上报
+      console.warn('[BootFlow] 重读开机自记账失败，沿用旧值：', e)
+    }
+  },
 
   select: (id) => set({ selectedId: id, anchorId: id }),
   setQuery: (q) => set({ query: q }),

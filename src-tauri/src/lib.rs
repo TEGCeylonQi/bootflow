@@ -33,8 +33,29 @@ mod writers;
 
 pub use error::AppError;
 
+/// 开机自启的静默记账入口：追加一条开机耗时记录。失败只记日志，不弹窗、不阻塞。
+///
+/// 供 `main.rs` 的 `--mark-boot` 分支调用。也常作为测试入口。
+pub fn record_boot_marker() -> Result<(), String> {
+    crate::diag::boot_marker::record_once()
+}
+
+/// 首次启动时注册「开机自记账」自启条目（写 `HKCU\...\Run`,带 `--mark-boot`）。
+/// 幂等：已存在则跳过。这是**默认开启**的核心功能，不提供开关——见 boot_marker 模块头。
+///
+/// ⚠️ 只在主程序正常启动（非 `--mark-boot` 静默分支）时调用。
+pub fn ensure_boot_marker_autostart() -> Result<(), String> {
+    crate::diag::boot_marker::ensure_autostart()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 「每次开机自记账」：正常启动 GUI 时注册自启动（幂等）。
+    // 静默分支（--mark-boot）不会走到这里，避免每次开机都注册一遍。
+    if let Err(e) = ensure_boot_marker_autostart() {
+        log::warn!("开机自记账注册失败：{e}");
+    }
+
     tauri::Builder::default()
         .plugin(
             tauri_plugin_log::Builder::new()
@@ -45,6 +66,7 @@ pub fn run() {
             commands::scan_all,
             commands::scan_source,
             commands::get_boot_timeline,
+            commands::get_boot_records,
             commands::get_os_info,
             commands::check_elevation,
             commands::request_elevation,

@@ -1,7 +1,7 @@
 [package]
 name = "bootflow"
 version = "0.2.0"
-description = "BootFlow — Windows 启动项体检与编排工具"
+description = "BootFlow — Windows 启动项编排工具"
 authors = ["BootFlow Contributors"]
 edition = "2021"
 rust-version = "1.77"
@@ -53,6 +53,8 @@ windows = { version = "0.58", features = [
     "Win32_UI_WindowsAndMessaging",
     # WinHttpOpen / WinHttpSendRequest —— 检查更新（T55）
     "Win32_Networking_WinHttp",
+    # GetTickCount64 —— 自记账：内核启动后走过的毫秒（T57）
+    "Win32_System_SystemInformation",
 ] }
 
 [profile.release]

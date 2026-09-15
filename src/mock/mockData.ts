@@ -21,6 +21,7 @@
  * 开发模式下使用（也保留作为界面测试的 fixture）。
  */
 import type {
+  BootRecord,
   NameSource,
   Recommendation,
   ScanResult,
@@ -902,3 +903,33 @@ export const MOCK_SCAN_RESULT_TIMELINE_DENIED: ScanResult = {
       '读取开机性能日志需要管理员权限。系统默认没有向普通用户开放这个日志，所以这次没能读到耗时数据。',
   },
 }
+
+/**
+ * 「开机自记账」的记录样例 —— 开发与验证用。
+ *
+ * 数值刻意取**普通办公机的常见区间**（20–40 秒），不取自任何一台具体机器的实测：
+ * 这里只用来验证图表与文案，带真实数据进来既没必要也容易泄露使用者的机器特征。
+ *
+ * 时间用相对当前的偏移生成而不是写死日期——写死的话过几天就变成"几个月前的开机"，
+ * 相对时间文案（"2 小时前"）会被渲染成无意义的样子，看不出真实效果。
+ */
+const hoursAgo = (h: number): string =>
+  new Date(Date.now() - h * 3600_000).toISOString()
+
+export const MOCK_BOOT_RECORDS: BootRecord[] = [
+  { hours: 3, totalMs: 24_100 },
+  { hours: 27, totalMs: 41_800 },
+  { hours: 51, totalMs: 22_600 },
+  { hours: 74, totalMs: 26_400 },
+  { hours: 99, totalMs: 23_900 },
+  { hours: 123, totalMs: 38_200 },
+  { hours: 147, totalMs: 21_500 },
+].map(({ hours, totalMs }) => ({
+  // 起点 = 记录时刻 − 已开机时长；样例里让它等同于"记录前几秒开始"，够真实。
+  bootStartedAt: hoursAgo(hours),
+  recordedAt: new Date(Date.now() - hours * 3600_000 + totalMs).toISOString(),
+  totalMs,
+  source: 'marker',
+  // 样例数据代表"一切正常"的样子：系统日志能读到，所以是实测口径。
+  basis: 'log',
+}))

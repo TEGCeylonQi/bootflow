@@ -48,6 +48,17 @@ pub async fn get_boot_timeline() -> Result<BootTimeline> {
     Ok(crate::diag::timeline::build(&outcome))
 }
 
+/// 「每次开机自记账」记录列表（旧 → 新，最近 50 条）。
+///
+/// 与 Event 100 的 `get_boot_timeline` 是**两条独立数据通路**：
+/// 自记账不依赖快速启动/慢启动判定，只要系统能开机就会写一条，
+/// 粒度是「总开机耗时（从内核启动到登录自启那一刻）」。
+/// 前端在 Event 100 无数据时用这条兜底展示；有 Event 100 时 Event 100 优先。
+#[tauri::command]
+pub async fn get_boot_records() -> Vec<crate::diag::boot_marker::BootRecordEntry> {
+    crate::diag::boot_marker::read_records()
+}
+
 #[tauri::command]
 pub async fn get_os_info() -> Result<OsInfo> {
     spawn_blocking_result(sys::os_info).await

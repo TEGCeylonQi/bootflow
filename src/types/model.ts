@@ -298,6 +298,45 @@ export interface BootTimeline {
   needsElevation: boolean
 }
 
+/**
+ * 一条「开机自记账」记录——**BootFlow 自己写的**，不依赖系统事件日志。
+ *
+ * 存在的理由：Windows 的 Event 100 只在「完整引导 + 系统认为开机偏慢」时才写，
+ * 开了快速启动的机器可以几个月一条都没有（实测某台机器 403 天零记录）。
+ * 自记账在每次登录时由 BootFlow 的自启条目静默跑一次，绕过这个限制。
+ *
+ * ⚠️ **能承诺与不能承诺的**：
+ * - 能：从内核启动到登录自启那一刻的**总时长**（`GetTickCount64` 官方口径，实测）；
+ * - 不能：拆到各相位 / 各启动项。那是用户态拿不到的，只有 Event 100/103 有。
+ * 所以界面上它只画一根总长度条，绝不假造分段。
+ */
+export interface BootRecord {
+  /** 近似开机起点（ISO8601，本地时区）。由「记录时刻 − 已开机时长」推得。 */
+  bootStartedAt: string
+  /** 记录落盘那一刻的墙钟时间（ISO8601） */
+  recordedAt: string
+  /**
+   * 从内核启动到记录这一刻的毫秒数（`GetTickCount64` 官方口径）。
+   *
+   * **同一次开机只保留最早的一次观测**：开机自启跑的那次≈开机耗时；
+   * 之后手动重跑会得到"运行时长"，那不是开机耗时，会被丢弃。
+   */
+  totalMs: number
+  /** 数据来源，恒为 `marker`（自记账）。Event 100 走 timeline，不写这里。 */
+  source: string
+  /**
+   * 开机起点是怎么来的——界面据此区分**实测**与**估算**。
+   *
+   * - `log`：系统日志里**本次开机**的那条事件给出起点（实测）。
+   * - `tick`：系统日志读不到，退回 `记录时刻 − GetTickCount64` 推算（估算）。
+   *
+   * 为什么必须带上：`GetTickCount64` 在**快速启动下不会重置**，
+   * 这条退路算出来可能是跨了好几次开关机的累计运行时长。
+   * 不标出来就等于拿推算冒充实测。
+   */
+  basis: string
+}
+
 export interface OsInfo {
   major: number
   minor: number

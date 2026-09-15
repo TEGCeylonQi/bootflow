@@ -12,6 +12,7 @@ import {
 } from '@/api/commands'
 import type { PhaseSpan } from '@/types/model'
 import { BootDiagInline } from '@/components/Diagnose/BootDiag'
+import { BootSelfRecords } from './BootSelfRecords'
 
 const AXIS_TEXT = '#8b949e'
 const SPLIT_LINE = '#21262d'
@@ -54,9 +55,11 @@ function relTime(iso: string): string {
 }
 
 /**
- * 「每次开机都记录」的引导卡片。
+ * 「系统记录开关」的检查卡片。
  *
- * 回答两个问题：为什么读不到 / 怎么让系统开始记。
+ * 注意这**不是**「让每次都记录」的开关——那个需求由自记账（BootSelfRecords）
+ * 满足了，且默认开启。这张卡回答的是另一件事：**为什么拿不到「分段」耗时**，
+ * 以及系统那一侧的开关到底有没有被策略关掉。
  *
  * 诚实原则声明：**开启 ≠ 每次开机一定记录**。Windows 默认允许记录，
  * 但 Event 100 往往只在开机偏慢时写入。一键开启只能保证"系统允许记录"
@@ -113,7 +116,7 @@ function BootRecordGuide() {
       style={{ marginTop: 8 }}
     >
       <div className="flex items-center gap-2">
-        <span className="text-2xs text-ink-dim">Windows 默认不记录每次开机的耗时</span>
+        <span className="text-2xs text-ink-dim">想看「每一段各花多久」？那要靠系统记录</span>
         <button
           type="button"
           onClick={open}
@@ -126,7 +129,7 @@ function BootRecordGuide() {
               检查中…
             </>
           ) : (
-            '查看能否开启'
+            '检查系统记录开关'
           )}
         </button>
       </div>
@@ -158,7 +161,9 @@ function withGaps(phases: PhaseSpan[]): PhaseSpan[] {
 
 export function GanttView(_props: { items: unknown[] }) {
   const bootTimeline = useAppStore((s) => s.bootTimeline)
+  const bootRecords = useAppStore((s) => s.bootRecords)
   const refreshTimeline = useAppStore((s) => s.refreshTimeline)
+  const refreshBootRecords = useAppStore((s) => s.refreshBootRecords)
 
   const option = useMemo(() => {
     if (!bootTimeline || bootTimeline.phases.length === 0) return null
@@ -378,7 +383,12 @@ export function GanttView(_props: { items: unknown[] }) {
 
             <button
               type="button"
-              onClick={() => void refreshTimeline()}
+              onClick={() => {
+                // 两条通路一起重读：系统分段（要提权）与自记账（不用提权）。
+                // 分开点两次在用户看来就是"点了没反应"，所以这里一并刷新。
+                void refreshTimeline()
+                void refreshBootRecords()
+              }}
               className="flex items-center gap-1.5 rounded-md border border-line px-2.5 py-1 text-xs text-ink-muted transition-colors hover:bg-hover hover:text-ink"
               title="重新读一次开机性能日志"
             >
@@ -386,6 +396,11 @@ export function GanttView(_props: { items: unknown[] }) {
               重新读取
             </button>
           </div>
+        </div>
+
+        {/* 系统那条通路读不到，但自记账这条不用提权，这里往往已经有数据 */}
+        <div style={{ marginTop: 8 }}>
+          <BootSelfRecords records={bootRecords} />
         </div>
 
         {/* 引导用户开启「每次开机都记录」 */}
@@ -397,28 +412,51 @@ export function GanttView(_props: { items: unknown[] }) {
   /* ── 分支二：权限没问题，但系统确实还没写过性能记录 ── */
 
   if (!option) {
-    return (
-      <div className="flex h-full items-center justify-center p-4">
-        <div className="max-w-sm text-center">
-          <p className="text-xs leading-5 text-ink-dim">
-            Windows 还没有为这台电脑记录开机性能数据。
-            系统通常在开机较慢时才会写这份记录，正常速度的开机可能一直是空的——
-            <span className="text-ink-muted">没有记录不代表没有耗时，只是系统觉得不值得记。</span>
-          </p>
-          <div className="mt-3 text-left">
-            <BootRecordGuide />
-          </div>
+    const hasSelf = bootRecords.length > 0
 
-          <button
-            type="button"
-            onClick={() => void refreshTimeline()}
-            className="mt-3 inline-flex items-center gap-1.5 rounded-md border border-line px-2.5 py-1 text-xs text-ink-muted transition-colors hover:bg-hover hover:text-ink"
-            title="重新读一次开机性能日志（提权后点这里立即看到数据）"
-          >
-            <RefreshCw size={12} />
-            重新读取
-          </button>
+    return (
+      <div className="p-4">
+        <div className="rounded-card border border-line bg-base px-3 py-2.5">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-medium text-ink">这次没有系统的「分段耗时」</span>
+          </div>
+          <p className="mt-1 text-xs leading-5 text-ink-muted">
+            Windows 只在开机偏慢、且走完整引导时才写这份记录。「关机再开」（快速启动）
+            不算完整引导，所以可能几个月都不写一条——
+            <span className="text-ink">但没有分段记录，不等于没有耗时。</span>
+          </p>
+
+          <div className="mt-2.5 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                void refreshTimeline()
+                void refreshBootRecords()
+              }}
+              className="flex items-center gap-1.5 rounded-md border border-line px-2.5 py-1 text-xs text-ink-muted transition-colors hover:bg-hover hover:text-ink"
+              title="重新读一次开机性能日志"
+            >
+              <RefreshCw size={12} />
+              重新读取
+            </button>
+            <BootDiagInline />
+          </div>
         </div>
+
+        {/* 自记账这条通路：不需提权、快速启动下也照样记，所以这里通常有数据 */}
+        <div style={{ marginTop: 8 }}>
+          <BootSelfRecords records={bootRecords} />
+        </div>
+
+        {/* 一条记录都还没有：说明还没在装好之后开过机。说清楚什么时候会开始有。 */}
+        {!hasSelf && (
+          <p className="mt-2 px-1 text-2xs leading-5 text-ink-dim">
+            BootFlow 已经登记为开机自启，<span className="text-ink">下次开机时就会自动记下第一条总时长</span>。
+            想同时看到系统给的分段耗时，请在下次用「重启」而不是「关机再开」。
+          </p>
+        )}
+
+        <BootRecordGuide />
       </div>
     )
   }
@@ -464,6 +502,16 @@ export function GanttView(_props: { items: unknown[] }) {
         )}
         <span className="text-ink-muted"> 本工具不推算系统没记的数据，没记录就是没记录。</span>
       </p>
+
+      {/*
+        下方是历史趋势：上面的图讲"这一次的各段耗时"，这里讲"最近几次的总时长"。
+        只有一条时不画——一次数据没有趋势可言，只是重复上面已经说过的话。
+      */}
+      {bootRecords.length >= 2 && (
+        <div style={{ marginTop: 10 }}>
+          <BootSelfRecords records={bootRecords} />
+        </div>
+      )}
     </div>
   )
 }

@@ -107,6 +107,38 @@ pub fn read_boot_events() -> BootLogOutcome {
     }
 }
 
+/// 读**本次开机**的起点时刻（原始 ISO8601，通常是 UTC `...Z`）。
+///
+/// ## 为什么不能用 `GetTickCount64` 代替
+///
+/// `GetTickCount64` 的语义是"系统启动以来经过的毫秒数"，但它**在快速启动
+/// （混合关机）下不会重置**——只有完整重启才会。开了快速启动的机器上，
+/// 关机再开只是把内核会话从 hiberfil 恢复，tick 继续累加，
+/// 于是 `当前时间 − tick` 指向的是**若干天前那次完整引导**，
+/// 算出来的"开机耗时"其实是跨多次开关机的累计运行时长。
+/// （这是已知的 Windows 行为，多个来源一致；不可用文档措辞想当然。）
+///
+/// ## 为什么用 System 通道
+///
+/// System 通道里这组事件**每次开机都会写**（含快速启动），而且该通道的 ACL
+/// 允许普通用户读取——不像开机性能通道那样必须提权。
+/// 所以它是"这次开机从几点开始"唯一既可靠、又不需要管理员权限的来源。
+///
+/// 取的是**最新的一条**：Event 12（内核报告操作系统已启动）、
+/// 6005（事件日志服务启动）、6009（Windows 版本信息）三者中时间最近的那个，
+/// 这样即使某个系统不写 Event 12，也仍能落到本次开机会话上。
+pub fn read_last_boot_start() -> Result<String, String> {
+    #[cfg(windows)]
+    {
+        windows_impl::last_boot_start_iso()
+    }
+
+    #[cfg(not(windows))]
+    {
+        Err("仅支持 Windows".to_string())
+    }
+}
+
 /* ───────────────────── XML 解析 ───────────────────── */
 
 /// 从一条渲染后的 `<Event>` XML 里提取结构。
@@ -338,6 +370,45 @@ mod windows_impl {
             }
 
             BootLogOutcome::Events(out)
+        }
+    }
+
+    /// 读 System 通道里**最新一条开机事件**的时间戳（原始 ISO8601）。
+    ///
+    /// 一次查询里把三档候选都包含进来（Event 12 / 6005 / 6009），
+    /// 用反向查询取最新的那条。这样做的理由：只要有**任意一条**是本次开机写的，
+    /// 结果就落在本次会话上；比"优先 12、取不到再试 6005"的串联写法更抗机型差异，
+    /// 也不会因为某个系统不写 Event 12 就退回上一次开机的旧值。
+    pub fn last_boot_start_iso() -> Result<String, String> {
+        let channel = wide("System");
+        let xpath = wide("*[System[(EventID=12 or EventID=6005 or EventID=6009)]]");
+
+        unsafe {
+            let flags = EvtQueryChannelPath.0 | EvtQueryReverseDirection.0;
+
+            let result = match EvtQuery(
+                EVT_HANDLE(0),
+                windows::core::PCWSTR(channel.as_ptr()),
+                windows::core::PCWSTR(xpath.as_ptr()),
+                flags,
+            ) {
+                Ok(h) => EvtGuard(h),
+                Err(e) => return Err(format!("无法打开 System 日志通道：{e}")),
+            };
+
+            let mut batch = vec![0isize; 1];
+            let mut returned: u32 = 0;
+
+            if EvtNext(result.0, &mut batch, 0, 0, &mut returned).is_err() || returned == 0 {
+                return Err("System 日志里没有开机事件".to_string());
+            }
+
+            let handle = EvtGuard(EVT_HANDLE(batch[0]));
+            let xml = render_xml(handle.0).ok_or_else(|| "开机事件渲染失败".to_string())?;
+
+            super::parse_event_xml(&xml)
+                .and_then(|ev| ev.time_created)
+                .ok_or_else(|| "开机事件里没有时间戳".to_string())
         }
     }
 

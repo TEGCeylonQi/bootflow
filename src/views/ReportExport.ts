@@ -131,7 +131,7 @@ export function toMarkdown(result: ScanResult): string {
   const cleanable = items.filter(isCleanable)
 
   const out: string[] = []
-  out.push('# BootFlow 启动项体检报告')
+  out.push('# BootFlow 启动项报告')
   out.push('')
   out.push('> 由 BootFlow 生成，只读取，未修改任何系统设置。')
   out.push('')

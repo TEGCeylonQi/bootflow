@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "BootFlow — 启动项体检",
+        "title": "BootFlow",
         "width": 1440,
         "height": 920,
         "minWidth": 1120,

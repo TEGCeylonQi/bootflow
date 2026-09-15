@@ -37,7 +37,7 @@ impl SourceKind {
     ///
     /// 排序理由：全局启动文件夹 > 用户启动文件夹 > 服务 > 计划任务 > Run。
     /// 前两者是"用户或安装程序明确放置的快捷方式"，语义最清晰；
-    /// Run 键排在后面是因为命名最随意（`localsend_app` 这种机器名多来自这里）。
+    /// Run 键排在后面是因为命名最随意（`exampleapp_app` 这种机器名多来自这里）。
     pub fn keep_rank(self) -> u8 {
         match self {
             SourceKind::StartupFolderMachine => 0,
@@ -414,7 +414,7 @@ pub struct StartupItem {
     /// 归一化后的去重键：小写 exe 路径（去引号）+ 归一化参数
     pub identity_key: String,
     /// 原始名称：注册表值名 / 任务名 / 文件名 / 服务名。
-    /// **不要直接展示给用户** —— 它可能是 `localsend_app` 这类机器名。
+    /// **不要直接展示给用户** —— 它可能是 `exampleapp_app` 这类机器名。
     pub name: String,
     /// 面向用户的类型。判定链见 `derive_kind()`。
     pub kind: ItemKind,

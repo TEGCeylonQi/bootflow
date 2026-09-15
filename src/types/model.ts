@@ -272,7 +272,7 @@ export interface StartupItem {
   identityKey: string
   /**
    * 原始名称：注册表值名 / 任务名 / 文件名 / 服务名。
-   * **不要直接展示给用户**——它可能是 `localsend_app` 这类程序内部名，
+   * **不要直接展示给用户**——它可能是 `exampleapp_app` 这类程序内部名，
    * 也可能是注册表里的 `AcmeHelper` 这类机器名。
    * 界面上一律走 `displayNameOf()`（见 src/lib/item.ts）。
    */

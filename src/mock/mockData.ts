@@ -480,17 +480,17 @@ const RAW_ITEMS: RawItem[] = [
   // 这里的 `timing` 必须与之一致，否则界面演示的是一个真实运行时
   // 永远不会出现的状态。
   {
-    id: 'run-localsend',
+    id: 'run-exampleapp',
     source: 'RunUser',
-    identityKey: 'c:\\users\\user\\appdata\\local\\programs\\localsend\\localsend_app.exe',
-    name: 'LocalSend',
-    command: '"C:\\Users\\user\\AppData\\Local\\Programs\\LocalSend\\localsend_app.exe"',
-    resolvedPath: 'C:\\Users\\user\\AppData\\Local\\Programs\\LocalSend\\localsend_app.exe',
+    identityKey: 'c:\\users\\user\\appdata\\local\\programs\\exampleapp\\exampleapp_app.exe',
+    name: 'ExampleApp',
+    command: '"C:\\Users\\user\\AppData\\Local\\Programs\\ExampleApp\\exampleapp_app.exe"',
+    resolvedPath: 'C:\\Users\\user\\AppData\\Local\\Programs\\ExampleApp\\exampleapp_app.exe',
     args: [],
     location: 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run',
     scope: 'user',
     enabled: true,
-    signer: THIRD_SIGNED('LocalSend'),
+    signer: THIRD_SIGNED('ExampleApp'),
     risk: 'Medium',
     riskReasons: ['与另一启动项指向同一程序，重复启动'],
     diagnostics: [
@@ -498,8 +498,8 @@ const RAW_ITEMS: RawItem[] = [
         code: 'DUPLICATE_ENTRY',
         severity: 'Medium',
         message:
-          '检测到同一程序存在两个自启入口（LocalSend 与 localsend_app）。重复启动会互相争抢单实例锁，其中一个会静默退出并可能弹出错误提示。建议保留一个。',
-        evidence: 'identityKey 归一化后与 run-localsend-2 相同',
+          '检测到同一程序存在两个自启入口（ExampleApp 与 exampleapp_app）。重复启动会互相争抢单实例锁，其中一个会静默退出并可能弹出错误提示。建议保留一个。',
+        evidence: 'identityKey 归一化后与 run-exampleapp-2 相同',
       },
     ],
     bootPhase: 'logon',
@@ -508,24 +508,24 @@ const RAW_ITEMS: RawItem[] = [
     desired: {},
   },
   {
-    id: 'run-localsend-2',
+    id: 'run-exampleapp-2',
     source: 'RunUser',
-    identityKey: 'c:\\users\\user\\appdata\\local\\programs\\localsend\\localsend_app.exe',
-    name: 'localsend_app',
-    command: '"C:\\Users\\user\\AppData\\Local\\Programs\\LocalSend\\localsend_app.exe" -minimized',
-    resolvedPath: 'C:\\Users\\user\\AppData\\Local\\Programs\\LocalSend\\localsend_app.exe',
+    identityKey: 'c:\\users\\user\\appdata\\local\\programs\\exampleapp\\exampleapp_app.exe',
+    name: 'exampleapp_app',
+    command: '"C:\\Users\\user\\AppData\\Local\\Programs\\ExampleApp\\exampleapp_app.exe" -minimized',
+    resolvedPath: 'C:\\Users\\user\\AppData\\Local\\Programs\\ExampleApp\\exampleapp_app.exe',
     args: ['-minimized'],
     location: 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run',
     scope: 'user',
     enabled: true,
-    signer: THIRD_SIGNED('LocalSend'),
+    signer: THIRD_SIGNED('ExampleApp'),
     risk: 'Medium',
-    riskReasons: ['与 LocalSend 为同一程序的重复启动项'],
+    riskReasons: ['与 ExampleApp 为同一程序的重复启动项'],
     diagnostics: [
       {
         code: 'DUPLICATE_ENTRY',
         severity: 'Medium',
-        message: '与 LocalSend 指向同一可执行文件，属重复启动项。',
+        message: '与 ExampleApp 指向同一可执行文件，属重复启动项。',
       },
     ],
     bootPhase: 'logon',
@@ -805,9 +805,9 @@ const RAW_ITEMS: RawItem[] = [
  * 这里手工指定只是为了让 mock 呈现出「后端做完识别之后」的样子。
  */
 const NAME_OVERRIDES: Record<string, { displayName: string; nameFrom: NameSource }> = {
-  // 名字统一显示为 LocalSend，「重复」这件事交给 validity 维度去表达，
+  // 名字统一显示为 ExampleApp，「重复」这件事交给 validity 维度去表达，
   // 不要再塞进名字里——那样既冗余，又占掉了用户最该看到的那个位置
-  'run-localsend-2': { displayName: 'LocalSend', nameFrom: 'fileDescription' },
+  'run-exampleapp-2': { displayName: 'ExampleApp', nameFrom: 'fileDescription' },
   // 系统里注册的是 exe 名，用户认的是产品名
   'run-autohotkey': { displayName: 'AutoHotkey', nameFrom: 'fileDescription' },
   'hook-appinit': { displayName: 'MacType 全局字体注入', nameFrom: 'registryValueName' },
@@ -840,7 +840,7 @@ const VALIDITY_OVERRIDES: Record<
       '目标文件不存在，程序可能已被卸载：C:\\Program Files (x86)\\OldMediaPlayer\\player.exe',
     advice: { action: 'remove', reason: DEAD_TARGET_REASON, confidence: 'measured' },
   },
-  'run-localsend-2': {
+  'run-exampleapp-2': {
     validity: 'duplicate',
     detail: '同一个程序在系统里注册了多个启动入口，此项属冗余',
     advice: {

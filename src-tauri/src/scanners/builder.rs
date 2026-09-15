@@ -309,12 +309,12 @@ mod tests {
 
     #[test]
     fn explicit_display_name_wins_over_version_info() {
-        let it = ItemBuilder::new(SourceKind::Service, "LocalSend Helper")
+        let it = ItemBuilder::new(SourceKind::Service, "ExampleApp Helper")
             .target(r"D:\__bootflow_missing__\x.exe")
-            .display_name("LocalSend 助手服务", NameSource::ServiceDisplayName)
+            .display_name("ExampleApp 助手服务", NameSource::ServiceDisplayName)
             .build();
 
-        assert_eq!(it.display_name.as_deref(), Some("LocalSend 助手服务"));
+        assert_eq!(it.display_name.as_deref(), Some("ExampleApp 助手服务"));
         assert_eq!(it.name_from, Some(NameSource::ServiceDisplayName));
     }
 

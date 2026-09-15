@@ -5,7 +5,7 @@
 //! 2. **发布者是谁**（版本信息 `CompanyName`）—— "Valve Corporation" 比
 //!    `steam.exe` 有用得多
 //! 3. **友好名称是什么**（`FileDescription` / `ProductName`）——
-//!    这是"统一识别启动项名称"的一手来源，比让用户看 `localsend_app` 强
+//!    这是"统一识别启动项名称"的一手来源，比让用户看 `exampleapp_app` 强
 //!
 //! 两个工程上的取舍值得说明：
 //!

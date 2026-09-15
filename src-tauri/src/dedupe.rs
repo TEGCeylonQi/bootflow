@@ -72,7 +72,7 @@ pub fn program_key(resolved_path: &str) -> String {
 /// 真机上典型的两类撞车：
 ///
 /// - 一个 `svchost.exe -k netsvcs -p` 承载十几个服务，身份键完全一样
-/// - 注册表里同一个程序的两条记录（如本地实测的两条 LocalSend），路径也一样
+/// - 注册表里同一个程序的两条记录（一个用内部名、一个用产品名），路径也一样
 ///
 /// 只用「来源 + 身份键」派生 id，这些项会拿到**完全相同的 id**。后果不是"看着别扭"：
 ///
@@ -338,11 +338,11 @@ mod tests {
         }
     }
 
-    /// 真实样本：本机 LocalSend 注册了两个入口，
-    /// 一个是 `localsend_app`（用户已停用），一个是 `LocalSend --hidden`（在用）。
+    /// 同一个程序注册了两个入口：一个是 `exampleapp_app`（用户已停用），
+    /// 一个是 `ExampleApp --hidden`（在用）。
     #[test]
     fn disabled_duplicate_is_a_remnant_not_a_duplicate() {
-        let path = r"E:\Tools\LocalSend\localsend_app.exe";
+        let path = r"C:\Program Files\ExampleApp\exampleapp_app.exe";
         let mut items = vec![
             make("keep", SourceKind::RunUser, path, &["--hidden"], true),
             make("dead", SourceKind::RunUser, path, &[], false),

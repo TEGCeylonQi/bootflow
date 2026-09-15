@@ -151,16 +151,63 @@ export async function openBootLog(): Promise<void> {
  * `%LOCALAPPDATA%\BootFlow\update-cache`，用系统默认方式打开安装向导，
  * 随即清理缓存文件。所以这个调用**成功返回时，安装向导已经在屏幕上**。
  *
- * 下载失败、唤起安装器失败会抛错（文案已是人话）。
- * 浏览器开发模式下模拟一段下载耗时后直接成功。
+ * `onProgress` 会在下载过程中被反复调用，参数为 (已下载字节, 总大小|undefined)。
+ * 浏览器开发模式下用 mock 模拟一段带进度的下载。
  */
-export async function installUpdate(url: string): Promise<void> {
+export async function installUpdate(
+  url: string,
+  onProgress?: (downloaded: number, total?: number) => void,
+): Promise<void> {
   if (!isTauri()) {
     const { mockInstallUpdate } = await import('@/mock/mockUpdate')
-    await delay(1400)
+    if (onProgress) {
+      // mock 一段带进度的下载：分 5 步推进，每步 200ms
+      for (let i = 1; i <= 5; i++) {
+        await delay(200)
+        onProgress(Math.round((i / 5) * 1_648_640), 1_648_640)
+      }
+    } else {
+      await delay(1400)
+    }
     return mockInstallUpdate(url)
   }
-  return invokeSafe<void>('install_update', { url })
+
+  const { Channel } = await import('@tauri-apps/api/core')
+  const channel = new Channel<{ downloaded: number; total?: number }>()
+  channel.onmessage = (msg) => {
+    onProgress?.(msg.downloaded, msg.total)
+  }
+  await invokeSafe<void>('install_update', { url, onProgress: channel })
+}
+
+/**
+ * 探测「系统是否允许记录开机性能」（只读，不写任何东西）。
+ *
+ * 与事件日志里**有没有**记录是两回事：
+ * 允许记录 ≠ 每次开机都会写 Event 100 —— 系统很可能只在开机偏慢时写。
+ * 前端用返回值决定「一键开启」按钮的文案与可用性。
+ */
+export interface BootRecordStatus {
+  /** allowed / disabled / unreadable */
+  state: 'allowed' | 'disabled' | 'unreadable'
+  message: string
+}
+
+export async function probeBootRecord(): Promise<BootRecordStatus> {
+  if (!isTauri()) return { state: 'allowed', message: '' }
+  return invokeSafe<BootRecordStatus>('probe_boot_record')
+}
+
+/**
+ * 「一键开启每次开机记录」。
+ *
+ * 可逆写操作：仅在 Boot 性能诊断被策略显式禁用时才写注册表（15 分钟后自动还原）；
+ * 已验证允许则什么都不做。需要管理员权限，失败文案已是人话。
+ * 浏览器开发模式下直接模拟成功。
+ */
+export async function enableBootRecord(): Promise<void> {
+  if (!isTauri()) return
+  return invokeSafe<void>('enable_boot_record')
 }
 
 /**

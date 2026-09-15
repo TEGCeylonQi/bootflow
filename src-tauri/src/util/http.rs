@@ -20,8 +20,8 @@ use windows::core::PCWSTR;
 use windows::Win32::Networking::WinHttp::{
     WinHttpCloseHandle, WinHttpConnect, WinHttpOpen, WinHttpOpenRequest, WinHttpQueryHeaders,
     WinHttpReadData, WinHttpReceiveResponse, WinHttpSendRequest, WinHttpSetTimeouts,
-    WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_FLAG_SECURE, WINHTTP_QUERY_FLAG_NUMBER,
-    WINHTTP_QUERY_STATUS_CODE,
+    WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_FLAG_SECURE, WINHTTP_QUERY_CONTENT_LENGTH,
+    WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_QUERY_STATUS_CODE,
 };
 
 use crate::error::{AppError, Result};
@@ -56,9 +56,16 @@ pub fn get_text(url: &str, user_agent: &str) -> Result<HttpResponse> {
 ///
 /// 用途：下载安装包。与 `get_text` 的唯一区别是不做 UTF-8 转码，
 /// 二进制按字节原样拿回。
-pub fn get_bytes(url: &str, user_agent: &str) -> Result<(u16, Vec<u8>)> {
+///
+/// `on_progress` 会在读取过程中被反复调用，参数为 (已下载字节数, 总大小)。
+/// 注意 HTTP 响应头不一定带 `Content-Length`，此时总大小传 `None`。
+pub fn get_bytes(
+    url: &str,
+    user_agent: &str,
+    on_progress: Option<&dyn Fn(u64, Option<u64>)>,
+) -> Result<(u16, Vec<u8>)> {
     let target = HttpsUrl::parse(url)?;
-    unsafe { fetch_bytes(&target, user_agent) }
+    unsafe { fetch_bytes(&target, user_agent, on_progress) }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -157,7 +164,7 @@ fn ctx<T>(r: windows::core::Result<T>, what: &str) -> Result<T> {
 }
 
 unsafe fn fetch(target: &HttpsUrl, user_agent: &str) -> Result<HttpResponse> {
-    let (status, bytes) = fetch_raw(target, user_agent, MAX_BODY)?;
+    let (status, bytes) = fetch_raw(target, user_agent, MAX_BODY, None)?;
 
     // GitHub 的响应都是 UTF-8；真出现坏字节也只是说明内容不对，
     // 让后续的 JSON 解析去报错，比在这里直接失败更有信息量
@@ -167,15 +174,22 @@ unsafe fn fetch(target: &HttpsUrl, user_agent: &str) -> Result<HttpResponse> {
     })
 }
 
-unsafe fn fetch_bytes(target: &HttpsUrl, user_agent: &str) -> Result<(u16, Vec<u8>)> {
-    fetch_raw(target, user_agent, MAX_DOWNLOAD)
+unsafe fn fetch_bytes(
+    target: &HttpsUrl,
+    user_agent: &str,
+    on_progress: Option<&dyn Fn(u64, Option<u64>)>,
+) -> Result<(u16, Vec<u8>)> {
+    fetch_raw(target, user_agent, MAX_DOWNLOAD, on_progress)
 }
 
 /// 公用的 HTTPS GET：建立会话 → 发请求 → 读响应 → 返回 (状态码, 原始字节)。
+///
+/// `on_progress` 只在下载场景传入（检查更新走 `get_text`，不涉及进度）。
 unsafe fn fetch_raw(
     target: &HttpsUrl,
     user_agent: &str,
     limit: usize,
+    on_progress: Option<&dyn Fn(u64, Option<u64>)>,
 ) -> Result<(u16, Vec<u8>)> {
     let ua = wide(user_agent);
     let host = wide(&target.host);
@@ -230,9 +244,29 @@ unsafe fn fetch_raw(
     )?;
 
     let status = read_status(request.raw())?;
-    let body = read_body(request.raw(), limit)?;
+    let total = read_content_length(request.raw());
+    let body = read_body(request.raw(), limit, total, on_progress)?;
 
     Ok((status, body))
+}
+
+/// 读响应头的 `Content-Length`（没有就返回 `None`）。
+unsafe fn read_content_length(request: *mut core::ffi::c_void) -> Option<u64> {
+    let mut len = 0u64;
+    let mut size = std::mem::size_of::<u64>() as u32;
+    let ok = WinHttpQueryHeaders(
+        request,
+        WINHTTP_QUERY_CONTENT_LENGTH,
+        PCWSTR::null(),
+        Some(&mut len as *mut u64 as *mut core::ffi::c_void),
+        &mut size,
+        std::ptr::null_mut(),
+    );
+    if ok.is_ok() {
+        Some(len)
+    } else {
+        None
+    }
 }
 
 unsafe fn read_status(request: *mut core::ffi::c_void) -> Result<u16> {
@@ -254,7 +288,12 @@ unsafe fn read_status(request: *mut core::ffi::c_void) -> Result<u16> {
     Ok(code as u16)
 }
 
-unsafe fn read_body(request: *mut core::ffi::c_void, limit: usize) -> Result<Vec<u8>> {
+unsafe fn read_body(
+    request: *mut core::ffi::c_void,
+    limit: usize,
+    total: Option<u64>,
+    on_progress: Option<&dyn Fn(u64, Option<u64>)>,
+) -> Result<Vec<u8>> {
     let mut buf = vec![0u8; CHUNK];
     let mut raw: Vec<u8> = Vec::with_capacity(CHUNK);
 
@@ -276,6 +315,10 @@ unsafe fn read_body(request: *mut core::ffi::c_void, limit: usize) -> Result<Vec
         }
 
         raw.extend_from_slice(&buf[..read as usize]);
+
+        if let Some(cb) = on_progress {
+            cb(raw.len() as u64, total);
+        }
 
         if raw.len() > limit {
             return Err(AppError::Other(format!(

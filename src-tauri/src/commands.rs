@@ -10,8 +10,9 @@
 
 use std::collections::HashMap;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
+use tauri::ipc::Channel;
 
 use crate::error::{AppError, Result};
 use crate::model::{BootTimeline, OsInfo, ScanResult, SourceKind, StartupItem};
@@ -147,14 +148,57 @@ pub async fn open_boot_log() -> Result<()> {
     spawn_blocking_result(crate::util::shell::open_boot_log).await
 }
 
+/// 探测「系统是否允许记录开机性能」（只读，不写任何东西）。
+///
+/// 这个开关回答的是"系统允不允许记录"，与事件日志里**有没有**记录是两回事：
+/// 允许记录 ≠ 每次开机都会写 Event 100 —— 系统很可能只在开机偏慢时写。
+/// 所以 `allowed` 状态下的 UI 文案要向用户解释"为什么还是没数据"。
+#[tauri::command]
+pub async fn probe_boot_record() -> Result<crate::diag::boot_record::BootRecordStatus> {
+    tauri::async_runtime::spawn_blocking(crate::diag::boot_record::probe)
+        .await
+        .map_err(|e| AppError::Other(format!("探测开机记录状态的任务异常终止：{e}")))
+}
+
+/// 「一键开启每次开机记录」。
+///
+/// 可逆操作：仅当 Boot 性能诊断场景被策略显式禁用时才会真正写注册表，
+/// 并把原值记下来、15 分钟后自动还原；若已验证为允许则什么都不做。
+/// 需要管理员权限；在普通权限下会返回 APP_ERROR（人话），前端据此引导提权。
+#[tauri::command]
+pub async fn enable_boot_record() -> Result<()> {
+    spawn_blocking_result(crate::diag::boot_record::enable).await
+}
+
 /// 下载并拉起安装包（更新流程）。
 ///
 /// `url` 必须是检查更新返回的资产下载地址。后端会做两层校验：
 /// 域名必须属于 GitHub，路径必须在本仓库的 Releases 下载段。
 /// 下载完成后用 ShellExecute 打开安装向导，并清理缓存文件。
+///
+/// `on_progress` 是 Tauri 的 Channel：下载过程中会持续推送
+/// `{ "downloaded": u64, "total": Option<u64> }` 给前端，用于绘制进度条。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadProgress {
+    pub downloaded: u64,
+    pub total: Option<u64>,
+}
+
 #[tauri::command]
-pub async fn install_update(url: String) -> Result<()> {
-    spawn_blocking_result(move || crate::update::install_update(&url)).await
+pub async fn install_update(url: String, on_progress: Channel<DownloadProgress>) -> Result<()> {
+    tauri::async_runtime::spawn_blocking(move || {
+        // Channel 是 Send + 'static，闭包可整体 move 进 spawn_blocking；
+        // 下载循环里同步回调 send 即可（send 内部会切线程池，不会阻塞下载）
+        crate::update::install_update(
+            &url,
+            Some(&|downloaded, total| {
+                let _ = on_progress.send(DownloadProgress { downloaded, total });
+            }),
+        )
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("下载更新的任务异常终止：{e}")))?
 }
 
 /// 清理「下载更新」留下的缓存安装包。

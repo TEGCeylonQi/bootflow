@@ -233,8 +233,7 @@ function Available({ result, onOpenPage }: { result: UpdateCheck; onOpenPage: ()
     'idle',
   )
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
-
-  // 默认挑排在最前的产物（后端已把安装包排到第一位）
+  const [progress, setProgress] = useState<{ done: number; total?: number } | null>(null)
   const [chosen, setChosen] = useState<ReleaseAsset | null>(result.assets[0] ?? null)
   const busy = installState === 'downloading'
 
@@ -242,8 +241,9 @@ function Available({ result, onOpenPage }: { result: UpdateCheck; onOpenPage: ()
     if (!chosen || busy) return
     setInstallState('downloading')
     setErrorMsg(null)
+    setProgress({ done: 0, total: chosen.size || undefined })
     try {
-      await installUpdate(chosen.url)
+      await installUpdate(chosen.url, (done, total) => setProgress({ done, total }))
       setInstallState('done')
     } catch (e) {
       setErrorMsg(e instanceof Error ? e.message : String(e))
@@ -316,9 +316,31 @@ function Available({ result, onOpenPage }: { result: UpdateCheck; onOpenPage: ()
           </PrimaryButton>
         </div>
       ) : installState === 'downloading' ? (
-        <div className="flex items-center gap-2 text-2xs text-ink-muted">
-          <Loader2 size={13} className="animate-spin" />
-          正在下载并准备安装…
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between text-2xs text-ink-muted">
+            <span className="flex items-center gap-1.5">
+              <Loader2 size={13} className="animate-spin" />
+              正在下载 {chosen?.name}
+            </span>
+            {progress?.total ? (
+              <span className="tnum">
+                {fmtSize(progress.done)} / {fmtSize(progress.total)}（
+                {Math.min(100, Math.round((progress.done / progress.total) * 100))}%）
+              </span>
+            ) : null}
+          </div>
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-elevated">
+            <div
+              className="h-full rounded-full transition-all duration-200"
+              style={{
+                width: progress?.total
+                  ? `${Math.min(100, (progress.done / progress.total) * 100)}%`
+                  : '100%',
+                background: OK,
+              }}
+            />
+          </div>
+          <p className="text-2xs text-ink-dim">下载完成后会自动打开安装向导。</p>
         </div>
       ) : (
         <div className="flex items-center gap-2">

@@ -14,6 +14,7 @@
 //! | `codes` | 诊断码的唯一产地 |
 //! | `known` | 「本该是什么样」的参照表（白名单） |
 //! | `boot_log` | 从事件日志读开机耗时原始数据 |
+//! | `boot_record` | 「开机记录」开关的探测与一键开启（唯一写系统策略的模块） |
 //! | `timeline` | 把事件数据拼成相位时间轴，并把慢服务对应到启动项 |
 //! | `risk` | 三层风险评级 |
 //!
@@ -29,6 +30,7 @@
 //! 对用户的伤害完全不是一个量级。
 
 pub mod boot_log;
+pub mod boot_record;
 pub mod codes;
 pub mod known;
 pub mod risk;

@@ -1,9 +1,9 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import ReactECharts from 'echarts-for-react'
-import { ShieldAlert } from 'lucide-react'
+import { Loader2, ShieldAlert } from 'lucide-react'
 import { useAppStore } from '@/store/useAppStore'
 import { PHASE_COLOR, PHASE_LABEL } from '@/constants'
-import { isTauri, openBootLog, requestElevation } from '@/api/commands'
+import { isTauri, openBootLog, requestElevation, probeBootRecord, enableBootRecord } from '@/api/commands'
 import type { PhaseSpan } from '@/types/model'
 
 const AXIS_TEXT = '#8b949e'
@@ -44,6 +44,88 @@ function relTime(iso: string): string {
   const hours = Math.round(mins / 60)
   if (hours < 36) return `${hours} 小时前`
   return `${Math.round(hours / 24)} 天前`
+}
+
+/**
+ * 「每次开机都记录」的引导卡片。
+ *
+ * 回答两个问题：为什么读不到 / 怎么让系统开始记。
+ *
+ * 诚实原则声明：**开启 ≠ 每次开机一定记录**。Windows 默认允许记录，
+ * 但 Event 100 往往只在开机偏慢时写入。一键开启只能保证"系统允许记录"
+ * （如果策略显式禁用了的话），以及提醒用户用**重启**而不是「关机再开」——
+ * 快速启动（Fast Startup）会跳过完整引导，不产生记录。
+ */
+function BootRecordGuide() {
+  const [state, setState] = useState<'idle' | 'checking' | 'done' | 'error'>('idle')
+  const [msg, setMsg] = useState('')
+
+  const open = async () => {
+    setState('checking')
+    setMsg('')
+    try {
+      const status = await probeBootRecord()
+      if (status.state === 'allowed') {
+        // 系统已允许记录：解释为什么还是没数据，并指引用重启触发一次
+        setMsg(
+          '这个开关其实一直开着。Windows 平时只在开机偏慢时记录一次，「关机再开」（快速启动）也不算完整引导。' +
+            '想要在下次开机时看到耗时数据，请用「完整重启」而不是「关机再开机」。',
+        )
+        setState('done')
+        return
+      }
+      if (status.state === 'disabled') {
+        // 系统被策略禁了：试着帮他打开
+        try {
+          await enableBootRecord()
+          setMsg(
+            '已帮你恢复允许记录（系统策略会在 15 分钟后自动还原）。' +
+              '下次**完整重启**时就会写一次开机性能记录。注意：关机再开属于快速启动，不会触发记录。',
+          )
+          setState('done')
+        } catch (e) {
+          setMsg(e instanceof Error ? e.message : String(e))
+          setState('error')
+        }
+        return
+      }
+      // unreadable：无权限等原因
+      setMsg(status.message || '无法确认当前是否允许记录，请以管理员身份重试。')
+      setState('error')
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : String(e))
+      setState('error')
+    }
+  }
+
+  const isBusy = state === 'checking'
+
+  return (
+    <div
+      className="rounded-card border border-line bg-base px-3 py-2.5"
+      style={{ marginTop: 8 }}
+    >
+      <div className="flex items-center gap-2">
+        <span className="text-2xs text-ink-dim">Windows 默认不记录每次开机的耗时</span>
+        <button
+          type="button"
+          onClick={open}
+          disabled={isBusy}
+          className="flex items-center gap-1.5 rounded-md border border-line px-2 py-1 text-2xs text-ink transition-colors hover:text-accent disabled:opacity-50"
+        >
+          {isBusy ? (
+            <>
+              <Loader2 size={12} className="animate-spin" />
+              检查中…
+            </>
+          ) : (
+            '查看能否开启'
+          )}
+        </button>
+      </div>
+      {msg && <p className="mt-2 text-2xs leading-5 text-ink-muted">{msg}</p>}
+    </div>
+  )
 }
 
 /**
@@ -285,6 +367,9 @@ export function GanttView(_props: { items: unknown[] }) {
             )}
           </div>
         </div>
+
+        {/* 引导用户开启「每次开机都记录」 */}
+        <BootRecordGuide />
       </div>
     )
   }
@@ -294,11 +379,16 @@ export function GanttView(_props: { items: unknown[] }) {
   if (!option) {
     return (
       <div className="flex h-full items-center justify-center p-4">
-        <p className="max-w-sm text-center text-xs leading-5 text-ink-dim">
-          Windows 还没有为这台电脑记录开机性能数据。
-          系统通常在开机较慢时才会写这份记录，正常速度的开机可能一直是空的——
-          <span className="text-ink-muted">没有记录不代表没有耗时，只是系统觉得不值得记。</span>
-        </p>
+        <div className="max-w-sm text-center">
+          <p className="text-xs leading-5 text-ink-dim">
+            Windows 还没有为这台电脑记录开机性能数据。
+            系统通常在开机较慢时才会写这份记录，正常速度的开机可能一直是空的——
+            <span className="text-ink-muted">没有记录不代表没有耗时，只是系统觉得不值得记。</span>
+          </p>
+          <div className="mt-3 text-left">
+            <BootRecordGuide />
+          </div>
+        </div>
       </div>
     )
   }

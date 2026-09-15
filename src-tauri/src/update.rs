@@ -169,7 +169,12 @@ pub struct ReleaseAsset {
 ///
 /// 返回值就是"成不成功"：下载失败、启动安装器失败都会返回带人话的 `Err`。
 /// 安装器一旦被唤起，安装向导接管用户视线，本函数立即清理缓存并返回 `Ok`。
-pub fn install_update(asset_url: &str) -> Result<()> {
+///
+/// `on_progress` 用于向 UI 汇报下载进度（已下载字节、总大小；总大小可能未知）。
+pub fn install_update(
+    asset_url: &str,
+    on_progress: Option<&dyn Fn(u64, Option<u64>)>,
+) -> Result<()> {
     ensure_trusted_url(asset_url)?;
 
     // 只允许从本仓库的 Release 下载页取文件
@@ -186,7 +191,7 @@ pub fn install_update(asset_url: &str) -> Result<()> {
     let dest = dir.join(&file_name);
 
     let ua = format!("BootFlow/{} (+https://github.com/{REPO})", current_version());
-    let (status, bytes) = http::get_bytes(asset_url, &ua)?;
+    let (status, bytes) = http::get_bytes(asset_url, &ua, on_progress)?;
     if !(200..=299).contains(&status) {
         return Err(AppError::Other(format!("下载安装包失败（HTTP {status}）")));
     }

@@ -310,6 +310,13 @@ try {
       // 启动项本身不受影响，这条要在界面上说清楚
       assert((await denied.locator('text=这不影响上面列的启动项').count()) > 0, '没有说明其余数据不受影响')
       assert((await denied.locator('text=打开系统诊断日志查看').count()) > 0, '没有给出补齐数据的入口')
+
+      // 开机记录引导：卡片存在，且点击后给出诚实说明（系统默认允许、快速启动不记录）
+      const guide = denied.locator('text=Windows 默认不记录每次开机的耗时')
+      assert((await guide.count()) > 0, '没有「开机记录引导」卡片')
+      await denied.locator('button', { hasText: '查看能否开启' }).first().click()
+      await denied.waitForSelector('text=完整重启', { timeout: 5000 })
+
       assert(deniedErrors.length === 0, `控制台报错：${deniedErrors[0]?.slice(0, 120)}`)
       return '已给出原因与补齐入口'
     })

@@ -84,3 +84,23 @@ export interface ExportBundle {
   ps1: string
   reg: string
 }
+
+/** diagnose_boot_performance 的返回 —— 一键诊断「为什么没有开机性能数据」 */
+export interface BootPerformanceDiagnosis {
+  /** 结论（正常 / 没有读取权限 / 记录被策略禁用 / 快速启动生效 / 还没有开机性能记录 / 开关状态无法读取） */
+  verdict: string
+  /** 为什么（人话，含实际读到的证据） */
+  summary: string
+  /** 下一步该怎么做（人话） */
+  action: string
+  /** 是否应尝试「以管理员身份重新运行」 */
+  needsElevation: boolean
+  /** 日志里找到的开机性能记录条数 */
+  recordCount: number
+  /** 最近一次开机主事件的时间（如有） */
+  lastBootAt?: string
+  /** 对应的事件通道名 */
+  channel: string
+  /** 系统「已允许记录」的开关状态：allowed / disabled / unreadable */
+  recordSwitch: string
+}

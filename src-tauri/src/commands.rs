@@ -206,6 +206,16 @@ pub async fn clean_install_cache() -> Result<u32> {
     spawn_blocking_result(crate::update::clean_install_cache).await
 }
 
+/// 一键诊断「为什么没有开机性能数据」（跨设备，只读）。
+///
+/// 一次调用读两类事实（策略开关 + 性能日志），组合出可行动结论：
+/// 权限不足 / 策略禁用 / 快速启动 / 从未记录 / 正常。
+/// 任意装有 BootFlow 的机器都能用；全程只读，不改任何东西。
+#[tauri::command]
+pub async fn diagnose_boot_performance() -> Result<crate::diag::boot_verdict::BootPerformanceDiagnosis> {
+    spawn_blocking_result(|| Ok(crate::diag::boot_verdict::check())).await
+}
+
 // ============================================================
 // v0.2.0 「可写可控」—— 快照 / 预演 / 应用 / 回滚 / 导出
 // ============================================================

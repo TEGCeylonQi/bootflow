@@ -54,6 +54,7 @@ pub fn run() {
             commands::open_boot_log,
             commands::probe_boot_record,
             commands::enable_boot_record,
+            commands::diagnose_boot_performance,
             commands::install_update,
             commands::clean_install_cache,
             // v0.2.0 可写可控

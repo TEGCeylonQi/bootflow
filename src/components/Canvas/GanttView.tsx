@@ -1,10 +1,18 @@
 import { useMemo, useState } from 'react'
 import ReactECharts from 'echarts-for-react'
-import { Loader2, ShieldAlert } from 'lucide-react'
+import { Loader2, ShieldAlert, Stethoscope } from 'lucide-react'
 import { useAppStore } from '@/store/useAppStore'
 import { PHASE_COLOR, PHASE_LABEL } from '@/constants'
-import { isTauri, openBootLog, requestElevation, probeBootRecord, enableBootRecord } from '@/api/commands'
+import {
+  isTauri,
+  openBootLog,
+  requestElevation,
+  probeBootRecord,
+  enableBootRecord,
+  diagnoseBootPerformance,
+} from '@/api/commands'
 import type { PhaseSpan } from '@/types/model'
+import type { BootPerformanceDiagnosis } from '@/types/snapshot'
 
 const AXIS_TEXT = '#8b949e'
 const SPLIT_LINE = '#21262d'
@@ -124,6 +132,103 @@ function BootRecordGuide() {
         </button>
       </div>
       {msg && <p className="mt-2 text-2xs leading-5 text-ink-muted">{msg}</p>}
+    </div>
+  )
+}
+
+/**
+ * 「一键诊断：为什么没有开机性能数据」按钮 + 结果卡片。
+ *
+ * 与 BootRecordGuide（只问“开关能不能开”）不同，这里是**完整诊断**：
+ * 后端一次读策略开关 + 性能日志，组合出可行动结论（权限 / 策略禁用 /
+ * 快速启动 / 从未记录 / 正常）。任意设备都能用。
+ */
+function BootDiagButton() {
+  const [state, setState] = useState<'idle' | 'checking' | 'done' | 'error'>('idle')
+  const [diag, setDiag] = useState<BootPerformanceDiagnosis | null>(null)
+  const [msg, setMsg] = useState('')
+
+  const run = async () => {
+    setState('checking')
+    setMsg('')
+    setDiag(null)
+    try {
+      const d = await diagnoseBootPerformance()
+      setDiag(d)
+      setState('done')
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : String(e))
+      setState('error')
+    }
+  }
+
+  // 结论配色：正常 = 绿，其余警示色
+  const tone =
+    diag?.verdict === '正常'
+      ? { color: '#3fb950', border: '#3fb9504d', bg: '#3fb9500f' }
+      : diag?.verdict === '还没开机性能记录'
+        ? { color: '#d29922', border: '#d299224d', bg: '#d299220f' }
+        : { color: '#f0883e', border: '#f0883e4d', bg: '#f0883e0f' }
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => void run()}
+        disabled={state === 'checking'}
+        className="flex items-center gap-1.5 rounded-md border border-line px-2.5 py-1 text-xs text-ink-muted transition-colors hover:bg-hover hover:text-ink disabled:opacity-50"
+        title="一键查出卡在哪一层：权限 / 策略 / 快速启动 / 从未记录"
+      >
+        {state === 'checking' ? (
+          <>
+            <Loader2 size={12} className="animate-spin" />
+            诊断中…
+          </>
+        ) : (
+          <>
+            <Stethoscope size={12} />
+            一键诊断
+          </>
+        )}
+      </button>
+
+      {state === 'error' && (
+        <p className="mt-2 text-2xs leading-5 text-danger">{msg}</p>
+      )}
+
+      {diag && (
+        <div
+          className="mt-2 rounded-md border px-3 py-2"
+          style={{ borderColor: tone.border, background: tone.bg }}
+        >
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-medium" style={{ color: tone.color }}>
+              {diag.verdict}
+            </span>
+            {diag.needsElevation && isTauri() && (
+              <button
+                type="button"
+                onClick={() => void requestElevation()}
+                className="rounded border border-line px-1.5 py-0.5 text-2xs text-ink-muted transition-colors hover:text-ink"
+                title="权限类结论：以管理员身份重开即可读取"
+              >
+                以管理员权限重开
+              </button>
+            )}
+          </div>
+
+          <p className="mt-1.5 text-2xs leading-5 text-ink-muted">{diag.summary}</p>
+          <p className="mt-1 text-2xs leading-5 text-ink-dim">
+            下一步：{diag.action}
+          </p>
+
+          {/* 证据区：可复核 */}
+          <p className="mt-1.5 text-2xs leading-4 text-ink-faint">
+            依据：系统允许记录={diag.recordSwitch} · 日志记录数={diag.recordCount}
+            {diag.lastBootAt ? ` · 最近开机=${diag.lastBootAt}` : ''}
+          </p>
+        </div>
+      )}
     </div>
   )
 }
@@ -365,6 +470,8 @@ export function GanttView(_props: { items: unknown[] }) {
                 以管理员权限重开
               </button>
             )}
+
+            <BootDiagButton />
           </div>
         </div>
 

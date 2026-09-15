@@ -9,6 +9,7 @@ import type { BootTimeline, OsInfo, ScanResult, SourceKind, StartupItem } from '
 import type { UpdateCheck } from '@/types/update'
 import type {
   ApplyOutcome,
+  BootPerformanceDiagnosis,
   DryRunOutcome,
   EditInput,
   ExportBundle,
@@ -325,4 +326,25 @@ function mockDryRun(items: StartupItem[], edits: EditInput[]): DryRunOutcome {
   }
 
   return { steps, denied, noop: steps.length === 0 && denied.length === 0 }
+}
+
+/**
+ * 一键诊断「为什么没有开机性能数据」。
+ *
+ * 后端只读两处：策略开关（允不允许记录）+ 性能日志（有没有真的记录），
+ * 组合出可行动结论。任意设备都可用；浏览器模式返回「无后端」占位。
+ */
+export async function diagnoseBootPerformance(): Promise<BootPerformanceDiagnosis> {
+  if (!isTauri()) {
+    return {
+      verdict: '未运行在桌面环境',
+      summary: '浏览器模式下无法读取系统性能日志与策略开关。',
+      action: '请以管理员身份运行 BootFlow 后重试。',
+      needsElevation: true,
+      recordCount: 0,
+      channel: 'Microsoft-Windows-Diagnostics-Performance/Operational',
+      recordSwitch: 'unknown',
+    }
+  }
+  return invokeSafe<BootPerformanceDiagnosis>('diagnose_boot_performance')
 }

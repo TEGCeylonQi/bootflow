@@ -31,6 +31,7 @@
 
 pub mod boot_log;
 pub mod boot_record;
+pub mod boot_verdict;
 pub mod codes;
 pub mod known;
 pub mod risk;

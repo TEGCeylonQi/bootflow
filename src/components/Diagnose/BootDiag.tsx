@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Loader2, Stethoscope } from 'lucide-react'
 import { diagnoseBootPerformance, isTauri, requestElevation } from '@/api/commands'
+import { useAppStore } from '@/store/useAppStore'
 import type { BootPerformanceDiagnosis } from '@/types/snapshot'
 
 /**
@@ -23,6 +24,11 @@ export function useBootDiag() {
   const [state, setState] = useState<DiagState>('idle')
   const [diag, setDiag] = useState<BootPerformanceDiagnosis | null>(null)
   const [msg, setMsg] = useState('')
+  // 诊断与耗时页共用同一份事件日志：后端已把 timeline 一并捎回，
+  // 这里直接喂给耗时页，不再单独读一次——「诊断说有记录」与
+  // 「耗时页有图」永远是同一次读取的结果，不会出现"诊断 64 条、
+  // 耗时页却空白"这种不一致。
+  const setTimeline = useAppStore((s) => s.setBootTimeline)
 
   const run = async () => {
     setState('checking')
@@ -32,6 +38,7 @@ export function useBootDiag() {
       const d = await diagnoseBootPerformance()
       setDiag(d)
       setState('done')
+      if (d.timeline) setTimeline(d.timeline)
     } catch (e) {
       setMsg(e instanceof Error ? e.message : String(e))
       setState('error')

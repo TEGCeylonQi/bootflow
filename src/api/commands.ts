@@ -336,14 +336,23 @@ function mockDryRun(items: StartupItem[], edits: EditInput[]): DryRunOutcome {
  */
 export async function diagnoseBootPerformance(): Promise<BootPerformanceDiagnosis> {
   if (!isTauri()) {
+    const mod = await import('@/mock/mockData')
+    // 浏览器模式随手引一份 timeline，让「诊断 → 耗时页联动」也能演示：
+    // denied 模式下是无数据时间轴，否则是有数据时间轴。
+    const data = mockTimelineDenied() ? mod.MOCK_SCAN_RESULT_TIMELINE_DENIED : mod.MOCK_SCAN_RESULT
     return {
-      verdict: '未运行在桌面环境',
-      summary: '浏览器模式下无法读取系统性能日志与策略开关。',
-      action: '请以管理员身份运行 BootFlow 后重试。',
-      needsElevation: true,
-      recordCount: 0,
+      verdict: mockTimelineDenied() ? '没有读取权限' : '正常',
+      summary: mockTimelineDenied()
+        ? 'Windows 没有向普通账户开放开机性能日志的读取权限。'
+        : '系统一直在记录开机性能，最近一次开机主事件：刚刚（共 64 条相关记录）。',
+      action: mockTimelineDenied()
+        ? '以管理员身份重新打开 BootFlow 后重试。'
+        : '无需操作，启动时序图已可用。',
+      needsElevation: mockTimelineDenied(),
+      recordCount: mockTimelineDenied() ? 0 : 64,
       channel: 'Microsoft-Windows-Diagnostics-Performance/Operational',
-      recordSwitch: 'unknown',
+      recordSwitch: 'allowed',
+      timeline: structuredClone(data.bootTimeline),
     }
   }
   return invokeSafe<BootPerformanceDiagnosis>('diagnose_boot_performance')

@@ -98,6 +98,14 @@ interface AppState {
    * 不必整窗重扫。
    */
   refreshTimeline: () => Promise<void>
+  /**
+   * 直接写入时间轴（诊断命令捎回 timeline 时用，避免二次读取）。
+   *
+   * 诊断 `diagnose_boot_performance` 内部已经读过事件日志并 build 好
+   * timeline 一并返回，前端拿到后直接落地到 store——耗时分析页即刻
+   * 反映与诊断同一个读取结果，不需要前端再调一次 `get_boot_timeline`。
+   */
+  setBootTimeline: (t: BootTimeline) => void
   select: (id: string | null) => void
   setQuery: (q: string) => void
   toggleKind: (k: ItemKind) => void
@@ -197,6 +205,8 @@ export const useAppStore = create<AppState>()((set, get) => ({
       console.warn('[BootFlow] 重读开机耗时失败，沿用旧值：', e)
     }
   },
+
+  setBootTimeline: (timeline) => set({ bootTimeline: timeline }),
 
   select: (id) => set({ selectedId: id, anchorId: id }),
   setQuery: (q) => set({ query: q }),

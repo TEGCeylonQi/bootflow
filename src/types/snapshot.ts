@@ -5,6 +5,7 @@
  *   dry_run_edits / apply_edits / list_snapshots / rollback_to / export_snapshot
  * 字段一律 camelCase（Rust 侧 `#[serde(rename_all = "camelCase")]`）。
  */
+import type { BootTimeline } from './model'
 
 /** 后端预演返回的单个动作：before → after，前端直接渲染 */
 export interface PlannedAction {
@@ -103,4 +104,12 @@ export interface BootPerformanceDiagnosis {
   channel: string
   /** 系统「已允许记录」的开关状态：allowed / disabled / unreadable */
   recordSwitch: string
+  /**
+   * 本次诊断读取事件日志后 build 的时间轴。
+   *
+   * 诊断与耗时分析页共用同一份读取结果：诊断在这里把 timeline 一并捎回，
+   * 前端直接落地到 store，耗时页即刻与诊断一致，无需二次读取。
+   * 无数据 / 无权限时是个带 unavailableReason / needsElevation 的空时间轴。
+   */
+  timeline?: BootTimeline
 }

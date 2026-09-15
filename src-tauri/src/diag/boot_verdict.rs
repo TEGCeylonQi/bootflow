@@ -40,6 +40,9 @@ pub fn check() -> BootPerformanceDiagnosis {
     let outcome = boot_log::read_boot_events();
 
     let channel = "Microsoft-Windows-Diagnostics-Performance/Operational";
+    // 诊断已经读过事件日志，顺手 build 成时间轴捎回；
+    // 前端拿到后直接喂给耗时分析页，不必再读第二次。
+    let timeline = crate::diag::timeline::build(&outcome);
 
     match (&switch.state, &outcome) {
         // ——— 能读到事件：系统正常在记录 ———
@@ -63,6 +66,7 @@ pub fn check() -> BootPerformanceDiagnosis {
                     last_boot_at,
                     channel,
                     record_switch: switch.state,
+                    timeline,
                 },
                 // 有事件但缺 Event 100，基本就是 Fast Startup 一直开着
                 None => BootPerformanceDiagnosis {
@@ -76,6 +80,7 @@ pub fn check() -> BootPerformanceDiagnosis {
                     last_boot_at: None,
                     channel,
                     record_switch: switch.state,
+                    timeline,
                 },
             };
             verdict
@@ -91,6 +96,7 @@ pub fn check() -> BootPerformanceDiagnosis {
             last_boot_at: None,
             channel,
             record_switch: switch.state,
+            timeline,
         },
 
         // ③ 能打开日志但没数据
@@ -106,6 +112,7 @@ pub fn check() -> BootPerformanceDiagnosis {
                     last_boot_at: None,
                     channel,
                     record_switch: switch.state,
+                    timeline,
                 }
             }
             // 开关也读不到 → 提示系统层面的问题
@@ -119,6 +126,7 @@ pub fn check() -> BootPerformanceDiagnosis {
                     last_boot_at: None,
                     channel,
                     record_switch: switch.state,
+                    timeline,
                 }
             }
             // 开关允许 + 日志没有数据 → 最常见：一直没被记
@@ -132,6 +140,7 @@ pub fn check() -> BootPerformanceDiagnosis {
                     last_boot_at: None,
                     channel,
                     record_switch: switch.state,
+                    timeline,
                 }
             }
         }
@@ -139,6 +148,10 @@ pub fn check() -> BootPerformanceDiagnosis {
 }
 
 /// 诊断结果（序列化给前端）。
+///
+/// 除结论文字外，还捎回 `timeline`：诊断内部已经读过事件日志，
+/// 顺手 build 成时间轴带回去，前端不必再调一次 `get_boot_timeline`。
+/// 这样「诊断说有记录」和「耗时页有图」永远是同一次读取的结果，不会错位。
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BootPerformanceDiagnosis {
@@ -150,6 +163,7 @@ pub struct BootPerformanceDiagnosis {
     pub last_boot_at: Option<String>,
     pub channel: &'static str,
     pub record_switch: &'static str,
+    pub timeline: crate::model::BootTimeline,
 }
 
 #[cfg(test)]
@@ -180,6 +194,7 @@ mod tests {
             last_boot_at: None,
             channel: "…",
             record_switch: "allowed",
+            timeline: crate::model::BootTimeline::default(),
         };
         assert!(!d.needs_elevation);
         assert_eq!(d.record_count, 0);
@@ -198,6 +213,7 @@ mod tests {
             last_boot_at: None,
             channel: "…",
             record_switch: "allowed",
+            timeline: crate::model::BootTimeline::default(),
         };
         assert!(d.needs_elevation);
     }

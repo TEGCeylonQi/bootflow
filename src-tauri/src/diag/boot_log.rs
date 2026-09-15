@@ -145,6 +145,13 @@ fn extract_tag<'a>(xml: &'a str, tag: &str) -> Option<&'a str> {
 }
 
 /// 取 `<tag attr="value"` 里的 value。
+///
+/// ⚠️ 同时兼容单双引号。Windows 的 `EvtRender`(以及 `wevtutil qe /f:xml`)
+/// 渲染出的 XML **属性一律用单引号**(`SystemTime='...'`),
+/// 而公开的文档样本/部分网页示例用的是双引号。写死只认一种,
+/// 会让 `TimeCreated` / `Data Name="..."` 这类属性全部解析失败:
+/// 事件计数正常(EventID 是取值)、字段与时间戳全丢——
+/// 表现为「读到了事件但全是空的」,耗时页永远空白。
 fn extract_attr<'a>(xml: &'a str, tag: &str, attr: &str) -> Option<&'a str> {
     let tag_pos = xml.find(&format!("<{tag}"))?;
     let rest = &xml[tag_pos..];
@@ -153,11 +160,18 @@ fn extract_attr<'a>(xml: &'a str, tag: &str, attr: &str) -> Option<&'a str> {
     let tag_end = rest.find('>')?;
     let head = &rest[..tag_end];
 
-    let needle = format!("{attr}=\"");
-    let start = head.find(&needle)? + needle.len();
-    let end = head[start..].find('"')? + start;
+    let needle = format!("{attr}=");
+    let eq = head.find(&needle)? + needle.len();
+    let quote = head.as_bytes().get(eq).copied()? as char;
 
-    Some(&head[start..end])
+    // 兼容单引号与双引号；两者都不是就当"没有这个属性"
+    if quote != '"' && quote != '\'' {
+        return None;
+    }
+
+    let val_start = eq + 1;
+    let val_end = head[val_start..].find(quote)? + val_start;
+    Some(&head[val_start..val_end])
 }
 
 /// 提取全部 `<Data Name="X">v</Data>` / `<Data Name="X"/>`。
@@ -177,10 +191,12 @@ fn parse_data_entries(xml: &str) -> BTreeMap<String, String> {
         // `<Data Name="X"/>` —— 有键无值，事件里常见（字段被置空）
         let self_closing = head.ends_with('/');
 
-        let name = match head.find("Name=\"") {
-            Some(p) => {
+        // 兼容单双引号（EvtRender 渲染用单引号，文档样本用双引号）
+        let name = match (head.find("Name=\""), head.find("Name='")) {
+            (Some(p), _) | (None, Some(p)) => {
+                let sep = head.as_bytes().get(p + 5).copied().unwrap_or(b'"') as char;
                 let s = p + 6;
-                match head[s..].find('"') {
+                match head[s..].find(sep) {
                     Some(e) => head[s..s + e].to_string(),
                     // 引号不闭合：整段当名字，总比丢掉这个字段强
                     None => head[s..].to_string(),
@@ -188,7 +204,7 @@ fn parse_data_entries(xml: &str) -> BTreeMap<String, String> {
             }
             // 没有 Name 属性的 Data（老模板里可能出现）按位置无名处理，
             // 直接跳过——按顺序猜名字比丢掉更危险。
-            None => continue,
+            (None, None) => continue,
         };
 
         if name.is_empty() {
@@ -379,6 +395,39 @@ mod windows_impl {
         }
     }
 
+    /// 真机探针（只读，不写任何东西）：用**同一个 EvtRender** 渲染一条
+    /// 普通用户可读的 System 事件，打印真实的引号风格。
+    /// 实证 `EvtRender` 输出是单引号还是双引号——决定解析器该兼容哪种。
+    ///
+    /// 运行：cargo test --lib probe_render_quote_style -- --ignored --nocapture
+    #[cfg(test)]
+    pub fn probe_render_quote_style_debug() -> Option<String> {
+        unsafe {
+            let channel = wide("System");
+            let xpath = wide("*[System[(EventID=1 or EventID=16 or EventID=6005)]]");
+            let flags = EvtQueryChannelPath.0 | EvtQueryReverseDirection.0;
+            let result = match EvtQuery(
+                EVT_HANDLE(0),
+                windows::core::PCWSTR(channel.as_ptr()),
+                windows::core::PCWSTR(xpath.as_ptr()),
+                flags,
+            ) {
+                Ok(h) => EvtGuard(h),
+                Err(_) => return Some(String::from("QUERY_FAILED")),
+            };
+
+            let mut batch = vec![0isize; 8];
+            let mut returned: u32 = 0;
+            let next = EvtNext(result.0, &mut batch, 0, 0, &mut returned);
+            if next.is_err() || returned == 0 {
+                return Some(String::from("NO_EVENTS"));
+            }
+
+            let handle = EvtGuard(EVT_HANDLE(batch[0]));
+            Some(render_xml(handle.0).unwrap_or_else(|| String::from("RENDER_FAILED")))
+        }
+    }
+
     #[allow(unused)]
     fn _keep_imports(_: RawEvent) {}
 }
@@ -524,5 +573,54 @@ mod tests {
                 println!("日志不可用：{why}");
             }
         }
+    }
+
+    /// EvtRender / wevtutil 渲染的 XML 属性用**单引号**。锁住：单引号样本必须能解析
+    /// （真实通道里实际就是这种风格，之前写死双引号导致字段全丢）。
+    #[test]
+    fn single_quote_attributes_are_parsed() {
+        // 用 `wevtutil /f:xml` 的真实风格：属性用单引号
+        let xml = r#"<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Microsoft-Windows-Diagnostics-Performance'/><EventID>100</EventID><Version>2</Version><Level>1</Level><TimeCreated SystemTime='2025-08-09T00:32:40.5600000Z'/><Channel>Microsoft-Windows-Diagnostics-Performance/Operational</Channel><Computer>DESKTOP-4F2K9LQ</Computer></System><EventData><Data Name='BootTsVersion'>2</Data><Data Name='BootStartTime'>2025-08-09T00:30:46.958344700Z</Data><Data Name='BootTime'>108602</Data><Data Name='MainPathBootTime'>100000</Data><Data Name='BootPostBootTime'>8602</Data><Data Name='BootIsDegradation'>false</Data></EventData></Event>"#;
+        let ev = parse_event_xml(xml).expect("单引号样本应能解析");
+
+        assert_eq!(ev.event_id, 100);
+        assert_eq!(ev.get_u64("BootTime"), Some(108602));
+        assert_eq!(ev.get_u64("MainPathBootTime"), Some(100000));
+        assert_eq!(ev.get_u64("BootPostBootTime"), Some(8602));
+        assert_eq!(ev.get_bool("BootIsDegradation"), Some(false));
+        assert_eq!(
+            ev.time_created.as_deref(),
+            Some("2025-08-09T00:32:40.5600000Z")
+        );
+        assert_eq!(ev.computer.as_deref(), Some("DESKTOP-4F2K9LQ"));
+    }
+
+    /// 真机探针：实证代码里 `EvtRender` 渲染出的 XML 引号风格。
+    /// 预期看到 `SystemTime='...'`（单引号）——若为双引号则本次修复冗余。
+    /// 运行：cargo test --lib probe_evtrender_quote_style -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn probe_evt_render_quote_style() {
+        match windows_impl::probe_render_quote_style_debug() {
+            Some(xml) => {
+                // 打印开头 400 字符，肉眼确认引号风格
+                let head: String = xml.chars().take(400).collect();
+                println!("EvtRender XML 头部：\n{head}");
+                let has_single = xml.contains("SystemTime='") || xml.contains("Name='");
+                let has_double = xml.contains("SystemTime=\"") || xml.contains("Name=\"");
+                println!("单引号属性：{has_single} | 双引号属性：{has_double}");
+            }
+            None => println!("probe 未返回内容"),
+        }
+    }
+
+    /// 单引号 + 自闭合 Data（空值）也能正确跳过，不把后面的字段吃掉。
+    #[test]
+    fn single_quote_self_closing_data_is_handled() {
+        let xml = r#"<Event><System><EventID>100</EventID></System><EventData><Data Name='BootPrefetchBytes'/><Data Name='BootTime'>100</Data></EventData></Event>"#;
+        let ev = parse_event_xml(xml).unwrap();
+
+        assert_eq!(ev.get_u64("BootTime"), Some(100), "自闭合字段不该吃掉后面的");
+        assert_eq!(ev.get("BootPrefetchBytes"), None);
     }
 }

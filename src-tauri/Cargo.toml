@@ -1,6 +1,6 @@
 [package]
 name = "bootflow"
-version = "0.1.0"
+version = "0.1.1"
 description = "BootFlow — Windows 启动项体检与编排工具"
 authors = ["BootFlow Contributors"]
 edition = "2021"
@@ -51,6 +51,8 @@ windows = { version = "0.58", features = [
     "Win32_Graphics_Gdi",
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
+    # WinHttpOpen / WinHttpSendRequest —— 检查更新（T55）
+    "Win32_Networking_WinHttp",
 ] }
 
 [profile.release]

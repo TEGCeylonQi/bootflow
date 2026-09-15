@@ -1,7 +1,7 @@
 {
   "name": "bootflow",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "Windows 启动项编排工具 — 只读体检版",
   "scripts": {
@@ -11,7 +11,7 @@
     "tauri": "tauri",
     "ui:check": "node tools/ui-check.mjs",
     "ui:smoke": "node tools/ui-smoke.mjs",
-    "check": "tsc --noEmit && node tools/ui-check.mjs"
+    "check": "tsc --noEmit && node tools/ui-check.mjs && node tools/check-version.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",

@@ -112,6 +112,31 @@ pub async fn get_icons(requests: Vec<IconRequest>) -> Result<HashMap<String, Str
     Ok(map)
 }
 
+/// 检查有没有新版本。
+///
+/// **这个 command 永远返回 `Ok`**：网络不通、接口限流、返回内容不对，
+/// 都会变成 `status = Failed` 的结果由前端如实展示。
+/// 检查更新是后台顺手做的事，不该以异常的形式砸到界面上——
+/// 而且如果它返回 `Err`，前端很容易写成"catch 里什么都不做"，
+/// 那用户就永远不知道更新检查其实是坏的。
+#[tauri::command]
+pub async fn check_update() -> Result<crate::update::UpdateCheck> {
+    // 网络请求是阻塞的（WinHTTP 是同步接口），必须离开 async 上下文
+    tauri::async_runtime::spawn_blocking(crate::update::check)
+        .await
+        .map_err(|e| AppError::Other(format!("检查更新的任务异常终止：{e}")))
+}
+
+/// 用默认浏览器打开发布页。
+///
+/// 地址由后端 `check_update` 给出；这里再过一道白名单，
+/// 确保交给系统 shell 的只可能是 GitHub 自家的地址。
+#[tauri::command]
+pub async fn open_release_page(url: String) -> Result<()> {
+    crate::update::ensure_trusted_url(&url)?;
+    spawn_blocking_result(move || crate::util::shell::open_url(&url)).await
+}
+
 /// 把同步函数丢到阻塞线程池并展开双层 Result。
 async fn spawn_blocking_result<T, F>(f: F) -> Result<T>
 where

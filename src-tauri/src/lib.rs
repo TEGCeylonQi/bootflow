@@ -2,13 +2,18 @@
 //!
 //! 分层（从下往上）：
 //! ```text
-//!   sys / elevate / util/*   系统能力（版本、权限、提权、签名、图标、.lnk）
+//!   sys / elevate / util/*   系统能力（版本、权限、提权、签名、图标、.lnk、http）
 //!   scanners/*               各来源扫描器，只负责"读出来"
 //!   pipeline                 后处理（身份归一 → 有效性 → 去重 → 建议）
 //!   valid / dedupe / advise  纯逻辑算法，可脱离 Windows 单测
 //!   model                    前后端共用契约
+//!   update                   版本比对与新版本检测（唯一会主动联网的模块）
 //!   commands                 暴露给前端的唯一出口
 //! ```
+//!
+//! 关于「联网」这一条：v0.1.0 之前整个程序不发任何网络请求。
+//! 从 v0.1.1 起，`update` 会在启动后读一次 GitHub 的发布信息——
+//! 除此之外没有第二个联网点，也不会把任何本机信息发出去。
 
 mod advise;
 mod commands;
@@ -20,6 +25,7 @@ mod model;
 mod pipeline;
 mod scanners;
 mod sys;
+mod update;
 mod util;
 mod valid;
 
@@ -41,6 +47,8 @@ pub fn run() {
             commands::check_elevation,
             commands::request_elevation,
             commands::get_icons,
+            commands::check_update,
+            commands::open_release_page,
         ])
         .run(tauri::generate_context!())
         .expect("BootFlow 启动失败");

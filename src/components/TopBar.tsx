@@ -7,6 +7,7 @@ import type { RiskLevel } from '@/types/model'
 import type { AppMode } from '@/types/plan'
 import { Badge, Dot } from '@/components/common/Badge'
 import { ExportMenu } from '@/components/ExportMenu'
+import { UpdateBadge } from '@/components/Update/UpdateBadge'
 
 const PLAN_COLOR = '#a371f7'
 
@@ -161,6 +162,13 @@ export function TopBar() {
         </button>
 
         <ExportMenu />
+
+        {/*
+         * 更新提示放在最右侧：它是"顺带看一眼"的信息，不该挤在
+         * 扫描、导出这些主要动作中间。有新版时它会自己变绿，
+         * 平时是一个安静的灰按钮。
+         */}
+        <UpdateBadge />
       </div>
     </header>
   )

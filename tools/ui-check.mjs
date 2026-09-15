@@ -146,43 +146,75 @@ function tsInterfaceFields(src, name) {
   return [...body.matchAll(/^\s{2}([a-zA-Z0-9_]+)\??\s*:/gm)].map((m) => m[1])
 }
 
-const tsModel = readFileSync(join(SRC, 'types', 'model.ts'), 'utf8')
-let rsModel = ''
-try {
-  rsModel = readFileSync(join(ROOT, 'src-tauri', 'src', 'model.rs'), 'utf8')
-} catch {
-  rsModel = ''
-}
-
 /**
- * 逐个比对的结构体清单。加入 BootTimeline / SlowService 是因为
- * 时间轴的字段是"诚实原则"的载体：`unavailableReason`、`needsElevation`
- * 一旦在某一侧漏掉，界面就会退回成一张空图，用户看到的是"开机不花时间"，
- * 而真实情况是"没权限读"。这种漂移静默且致命，必须被静态拦住。
+ * 跨语言的数据契约清单。
+ *
+ * 每一对「TS 类型文件 ↔ Rust 源文件」在这里登记一次，并列出要逐个比对的
+ * 结构体。加了新的前后端契约却忘了登记，等同于没有护栏——
+ * 所以宁可让这份清单长一点，也要一眼看得出哪些结构体正被盯着。
+ *
+ * 为什么值得为它写这么一段：字段在某一侧漏掉时，界面不会报错，
+ * 只会悄悄少显示一块内容。比如 `BootTimeline.needsElevation` 一旦丢失，
+ * 用户看到的是「开机耗时 0 秒」而不是「没权限读」；
+ * `UpdateCheck.status` 少一档，检查失败就会退化成谎报「已是最新」。
+ * 这种漂移静默且致命，必须被静态拦住。
  */
-const CONTRACT = [
-  'DesiredState',
-  'StartupItem',
-  'ScanResult',
-  'BootTimeline',
-  'SlowService',
-  'PhaseSpan',
-  'ItemTiming',
-  'SignerInfo',
-  'DiagnosticInfo',
-  'Recommendation',
+const CONTRACTS = [
+  {
+    label: 'model',
+    ts: join(SRC, 'types', 'model.ts'),
+    rs: join(ROOT, 'src-tauri', 'src', 'model.rs'),
+    structs: [
+      'DesiredState',
+      'StartupItem',
+      'ScanResult',
+      'BootTimeline',
+      'SlowService',
+      'PhaseSpan',
+      'ItemTiming',
+      'SignerInfo',
+      'DiagnosticInfo',
+      'Recommendation',
+    ],
+  },
+  {
+    label: 'update',
+    ts: join(SRC, 'types', 'update.ts'),
+    rs: join(ROOT, 'src-tauri', 'src', 'update.rs'),
+    structs: ['UpdateCheck', 'ReleaseAsset'],
+  },
 ]
 
 const contractDiffs = []
-if (rsModel) {
-  for (const name of CONTRACT) {
-    const ts = tsInterfaceFields(tsModel, name)
-    const rs = rustStructFields(rsModel, name)
+let contractStructCount = 0
+let contractPairsChecked = 0
+
+for (const contract of CONTRACTS) {
+  let tsSrc = ''
+  let rsSrc = ''
+  try {
+    tsSrc = readFileSync(contract.ts, 'utf8')
+    rsSrc = readFileSync(contract.rs, 'utf8')
+  } catch {
+    // 某一侧的文件还没建出来时跳过，不把"找不到文件"当成契约错误
+    continue
+  }
+
+  contractPairsChecked += 1
+
+  for (const name of contract.structs) {
+    const ts = tsInterfaceFields(tsSrc, name)
+    const rs = rustStructFields(rsSrc, name)
     if (!ts || !rs) continue
+    contractStructCount += 1
     const tsSet = new Set(ts)
     const rsSet = new Set(rs)
-    for (const f of ts) if (!rsSet.has(f)) contractDiffs.push(`${name}.${f} 只存在于 TS`)
-    for (const f of rs) if (!tsSet.has(f)) contractDiffs.push(`${name}.${f} 只存在于 Rust`)
+    for (const f of ts) {
+      if (!rsSet.has(f)) contractDiffs.push(`[${contract.label}] ${name}.${f} 只存在于 TS`)
+    }
+    for (const f of rs) {
+      if (!tsSet.has(f)) contractDiffs.push(`[${contract.label}] ${name}.${f} 只存在于 Rust`)
+    }
   }
 }
 
@@ -212,11 +244,15 @@ if (badTokens.length > 0) {
 if (contractDiffs.length > 0) {
   failed = true
   console.log(red(`✗ TS 与 Rust 的数据契约不一致（${contractDiffs.length} 处）`))
-  console.log(dim('  两份模型必须一一对应，否则字段会在传输中静默丢失。'))
+  console.log(dim('  两侧字段必须一一对应，否则字段会在传输中静默丢失。'))
   for (const d of contractDiffs) console.log(`   ${red(d)}`)
   console.log()
-} else if (rsModel) {
-  console.log(green(`✓ TS 与 Rust 的数据契约一致（${CONTRACT.length} 个结构体）`))
+} else if (contractPairsChecked > 0) {
+  console.log(
+    green(
+      `✓ TS 与 Rust 的数据契约一致（${contractStructCount} 个结构体 · ${contractPairsChecked} 组）`,
+    ),
+  )
   console.log()
 }
 

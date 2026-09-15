@@ -1,0 +1,92 @@
+import type { UpdateCheck } from '@/types/update'
+
+/**
+ * 更新检测的演示数据（仅浏览器开发模式使用）。
+ *
+ * **三档状态都要有 fixture。** 其中「检查失败」那一档尤其不能省——
+ * 它在真机上是最难复现、又最容易被写坏的一个分支：网络不通、公司代理拦掉、
+ * 接口限流，都会落到这里。如果只照着"有新版"的样子开发，
+ * 很容易把它写成"什么都不显示"，而用户看到的会是一个永远不提示更新的界面。
+ *
+ * 用地址栏参数切换：
+ *   ?update=latest   已是最新
+ *   ?update=failed   检查失败
+ *   （缺省）          有新版本
+ */
+
+const NOTES = `### 这一版做了什么
+
+- 启动后自动检查有没有新版本，有新版本会在顶栏亮一个提示
+- 检查更新走系统代理，不需要单独配置
+- 顺带清理了一处会误导人的死代码
+
+### 下载哪个
+
+| 文件 | 说明 |
+|---|---|
+| \`BootFlow_0.2.0_x64-setup.exe\` | 安装版，用户级安装，不需要管理员权限 |
+| \`bootflow-portable-x64.zip\` | 便携版，解压直接运行 |
+
+**本版仍然只读**，不会修改系统的任何一项配置。`
+
+const CHECKED_AT = '2026-09-15T00:40:00Z'
+
+export const MOCK_UPDATE_AVAILABLE: UpdateCheck = {
+  status: 'available',
+  currentVersion: '0.1.1',
+  latestVersion: '0.2.0',
+  releaseName: 'BootFlow v0.2.0 — 可写可控',
+  releaseUrl: 'https://github.com/TEGCeylonQi/bootflow/releases/tag/v0.2.0',
+  publishedAt: '2026-09-15T00:30:00Z',
+  notes: NOTES,
+  assets: [
+    {
+      name: 'BootFlow_0.2.0_x64-setup.exe',
+      url: 'https://github.com/TEGCeylonQi/bootflow/releases/download/v0.2.0/BootFlow_0.2.0_x64-setup.exe',
+      size: 1_648_640,
+    },
+    {
+      name: 'bootflow-portable-x64.zip',
+      url: 'https://github.com/TEGCeylonQi/bootflow/releases/download/v0.2.0/bootflow-portable-x64.zip',
+      size: 1_907_916,
+    },
+  ],
+  reason: null,
+  checkedAt: CHECKED_AT,
+}
+
+export const MOCK_UPDATE_LATEST: UpdateCheck = {
+  status: 'upToDate',
+  currentVersion: '0.1.1',
+  latestVersion: '0.1.1',
+  releaseName: 'BootFlow v0.1.1 — 更新检测',
+  releaseUrl: 'https://github.com/TEGCeylonQi/bootflow/releases/tag/v0.1.1',
+  publishedAt: '2026-09-15T00:10:00Z',
+  notes: null,
+  assets: [],
+  reason: null,
+  checkedAt: CHECKED_AT,
+}
+
+export const MOCK_UPDATE_FAILED: UpdateCheck = {
+  status: 'failed',
+  currentVersion: '0.1.1',
+  latestVersion: null,
+  releaseName: null,
+  releaseUrl: null,
+  publishedAt: null,
+  notes: null,
+  assets: [],
+  reason: '连接 GitHub 超时，检查一下网络或代理设置后重试',
+  checkedAt: CHECKED_AT,
+}
+
+/** 按地址栏参数挑一份演示数据；缺省给「有新版本」，方便直接看到完整面板 */
+export function mockUpdateResult(): UpdateCheck {
+  if (typeof window === 'undefined') return MOCK_UPDATE_AVAILABLE
+
+  const want = new URLSearchParams(window.location.search).get('update')
+  if (want === 'latest') return MOCK_UPDATE_LATEST
+  if (want === 'failed') return MOCK_UPDATE_FAILED
+  return MOCK_UPDATE_AVAILABLE
+}

@@ -6,6 +6,7 @@
  * (`__TAURI_INTERNALS__` 存在) 则走真实 invoke。
  */
 import type { BootTimeline, OsInfo, ScanResult, SourceKind, StartupItem } from '@/types/model'
+import type { UpdateCheck } from '@/types/update'
 
 /** 检测是否运行在 Tauri 容器内 */
 export const isTauri = (): boolean =>
@@ -98,10 +99,34 @@ export async function getIcons(requests: IconRequest[]): Promise<Record<string, 
   return invokeSafe<Record<string, string>>('get_icons', { requests })
 }
 
-/** 导出报告：后端只返回文本内容，落盘由前端负责，避免写权限问题 */
-export async function exportReport(format: 'json' | 'csv' | 'markdown'): Promise<string> {
+/**
+ * 检查有没有新版本。
+ *
+ * 后端的 `check_update` 设计上不会抛错——「连不上」「被限流」都会变成
+ * `status: 'failed'` 的正常返回，由界面如实呈现。所以这里也不需要 try/catch，
+ * **绝不能把失败悄悄咽掉**，那就等于谎报「已是最新」。
+ *
+ * 浏览器开发模式下回退到 mock，用 `?update=latest` / `?update=failed` 切换状态。
+ */
+export async function checkUpdate(): Promise<UpdateCheck> {
   if (!isTauri()) {
-    throw new Error('导出功能需要运行在桌面应用内')
+    const { mockUpdateResult } = await import('@/mock/mockUpdate')
+    await delay(700)
+    return mockUpdateResult()
   }
-  return invokeSafe<string>('export_report', { format })
+  return invokeSafe<UpdateCheck>('check_update')
+}
+
+/**
+ * 用系统默认浏览器打开发布页。
+ *
+ * 地址只会来自后端返回的 `releaseUrl`；后端 `open_release_page` 还会再校验一次
+ * 域名是否属于 GitHub。前端不做判断，也不允许传任意地址。
+ */
+export async function openReleasePage(url: string): Promise<void> {
+  if (!isTauri()) {
+    window.open(url, '_blank', 'noopener,noreferrer')
+    return
+  }
+  return invokeSafe<void>('open_release_page', { url })
 }

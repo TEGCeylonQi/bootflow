@@ -11,12 +11,18 @@
 //! | `sign` | 版本信息、数字签名、系统组件判定 | 全部扫描器 |
 //! | `icon` | 从 exe 提取图标（base64 PNG） | `get_icons` command |
 //! | `link` | 解析 `.lnk` 快捷方式（走 `IShellLinkW`） | 启动文件夹、Run 键 |
+//! | `http` | 一次性 HTTPS 读取（走系统 WinHTTP） | `check_update` command |
+//! | `shell` | 用默认浏览器打开网址（走 `ShellExecuteW`） | `open_release_page` command |
 //!
-//! ⚠️ 这些模块**只读**。整个 v1.0 不出现任何写注册表 / 写文件的代码路径。
+//! ⚠️ 这些模块**不改系统**：不写注册表、不写文件、不动任何配置。
+//! 唯一的对外动作是 `http` 与 `shell`——检查更新时向 GitHub 读一次版本信息，
+//! 以及（只在用户点击下载时）唤起浏览器。两者都不修改本机状态。
 
 pub mod approved;
 pub mod cmdline;
 pub mod com;
+pub mod http;
 pub mod icon;
 pub mod link;
+pub mod shell;
 pub mod sign;

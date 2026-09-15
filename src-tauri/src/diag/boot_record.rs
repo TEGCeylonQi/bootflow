@@ -78,7 +78,11 @@ fn probe_inner() -> Result<bool> {
     use winreg::RegKey;
 
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-    let key = hklm.open_subkey(SCENARIO_KEY)?;
+    // 键不存在 = 策略根本没部署 = 系统按默认行为记录（允许）。
+    // 常见情况（全新系统 / 未配策略的机器）就是这种，不能算"读不到"。
+    let Ok(key) = hklm.open_subkey(SCENARIO_KEY) else {
+        return Ok(true);
+    };
     match key.get_value::<u32, _>(SCENARIO_VALUE) {
         Ok(v) => Ok(v != 0),
         // 值不存在 = 未配置 = 默认允许记录

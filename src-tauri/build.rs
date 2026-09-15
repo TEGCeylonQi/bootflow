@@ -1,14 +1,17 @@
 fn main() {
-    // 默认以管理员权限运行（写入 exe 的 application manifest，level=requireAdministrator）。
+    // 以「可用最高权限」运行（写入 exe 的 application manifest，level=highestAvailable）。
+    //
+    // 【为什么是 highestAvailable 而不是 requireAdministrator】
+    // requireAdministrator 下一旦用户拒绝 UAC、或 UAC 被组策略关闭，程序
+    // **根本启动不了**——系统工具在大意之下打不开，比数据读不到更糟。
+    // highestAvailable 的意思是：进程以「当前用户被允许的最高级别」运行——
+    // 管理员账户自动提权（弹一次 UAC），普通账户 / 拒绝提权时以普通权限照常启动。
+    // 两种情况下程序都能开起来，区别只在「开机耗时那一层数据读不读得到」。
     //
     // 【为什么默认提权】
     // 开机性能日志（Microsoft-Windows-Diagnostics-Performance/Operational）的通道
     // ACL 里没有普通用户——只有管理员能读。而「读不到就说没数据」会让用户误以为
-    // 开机很快，等于伪造结论。程序作为诊断工具，启动时就要有读取能力。
-    //
-    // 【代价与取舍】
-    // 每次冷启动都会弹一次 UAC。在「多一次点击」与「核心数据永远读不到」之间
-    // 选前者。安装包仍用用户级安装（不需要管理员安装），只有运行时要提权。
+    // 开机很快，等于伪造结论。程序作为诊断工具，能提权时就提权。
     //
     // 【只在 release 注入】
     // debug / test 构建保持普通权限：`cargo test` 的测试 exe 如果也要求提权，
@@ -38,7 +41,7 @@ fn main() {
   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
     <security>
       <requestedPrivileges>
-        <requestedExecutionLevel level="requireAdministrator" uiAccess="false" />
+        <requestedExecutionLevel level="highestAvailable" uiAccess="false" />
       </requestedPrivileges>
     </security>
   </trustInfo>

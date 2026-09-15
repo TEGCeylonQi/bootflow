@@ -1,6 +1,6 @@
 [package]
 name = "bootflow"
-version = "0.1.2"
+version = "0.1.3"
 description = "BootFlow — Windows 启动项体检与编排工具"
 authors = ["BootFlow Contributors"]
 edition = "2021"

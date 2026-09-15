@@ -1,12 +1,14 @@
 //! 更新检测 —— 问一问 GitHub：「有没有比我手上这个更新的版本」。
 //!
-//! 【为什么只做"检测"，不做"自动更新"】
+//! 【为什么是"检测 + 下载并打开安装包"，而不是静默自动更新】
 //! Tauri 官方的 updater 插件能自己下载并替换安装包，代价是要长期保管一对
 //! 签名密钥：私钥丢了，老版本的用户就再也收不到更新；私钥泄露，任何人都能
-//! 往这条更新链路上塞东西。而它真正省下的，只是"用户点一下下载"这一步。
+//! 往这条更新链路上塞东西。
 //!
-//! 现阶段把"有没有新版、新在哪、去哪儿下载"讲清楚就够用了，链路更短、更可控。
-//! 等发布节奏稳定下来，再评估是否升级成自动更新。
+//! 折中方案（本版采用）：下载由我们完成（走与检测同一套 WinHTTP 通道，
+//! 自动吃系统代理与根证书），运行交给 Windows 自家的安装器（NSIS 安装包，
+//! 用户能看到安装向导）。我们把安装包放到缓存目录、拉起安装器、安装器接管后
+//! 清理缓存文件——整个链路只在"下载"一环联网，且不碰签名。
 //!
 //! 【诚实原则的延伸】
 //! **检查失败绝不等于"已是最新"。** 网络不通、被墙、接口限流都会让请求失败；
@@ -157,6 +159,162 @@ pub struct ReleaseAsset {
     pub name: String,
     pub url: String,
     pub size: u64,
+}
+
+/// 下载并打开安装包，完成后清理缓存文件。
+///
+/// 入参 `url` 来自 Release 资产列表（前端把用户点选的那条资产 URL 传过来）。
+/// 两层校验：先走域名白名单（只认 GitHub 自家），再限定在
+/// `https://github.com/<REPO>/releases/download/` 这个发布下载前缀下。
+///
+/// 返回值就是"成不成功"：下载失败、启动安装器失败都会返回带人话的 `Err`。
+/// 安装器一旦被唤起，安装向导接管用户视线，本函数立即清理缓存并返回 `Ok`。
+pub fn install_update(asset_url: &str) -> Result<()> {
+    ensure_trusted_url(asset_url)?;
+
+    // 只允许从本仓库的 Release 下载页取文件
+    let expected = format!("https://github.com/{REPO}/releases/download/");
+    if !asset_url.starts_with(&expected) {
+        return Err(AppError::Other(format!(
+            "安装包地址不在本仓库发布页下：{asset_url}"
+        )));
+    }
+
+    // 下载到本地缓存目录
+    let dir = install_cache_dir()?;
+    let file_name = asset_name_from_url(asset_url);
+    let dest = dir.join(&file_name);
+
+    let ua = format!("BootFlow/{} (+https://github.com/{REPO})", current_version());
+    let (status, bytes) = http::get_bytes(asset_url, &ua)?;
+    if !(200..=299).contains(&status) {
+        return Err(AppError::Other(format!("下载安装包失败（HTTP {status}）")));
+    }
+
+    std::fs::write(&dest, &bytes).map_err(|e| {
+        AppError::Other(format!("写入安装包失败（{}）：{e}", dest.display()))
+    })?;
+
+    // 用系统默认方式打开安装包（ShellExecute "open"）。
+    //
+    // 刻意不用 `runas` 提权：INSTALL 包自己会弹 UAC（installMode 由安装包
+    // 决定），而且用户级安装不一定需要管理员。提前提权反而是惊吓。
+    run_installer(&dest).map_err(|e| {
+        AppError::Other(format!("已下载但没能打开安装向导（{}）：{e}", dest.display()))
+    })?;
+
+    // 清理：安装器已经接管（或没接住），缓存文件都不再需要。
+    //
+    // 注意不能"立即删完就走"：ShellExecute 返回时安装器进程刚起跑，
+    // Windows 会把正在运行的 EXE 文件锁住，立刻删除十有八九失败。
+    // 所以先试一次，删不动就交给一个后台线程在几秒内反复重试；
+    // 还是删不掉（比如用户取消安装后文件被某进程占着），就留在原地，
+    // 由 `clean_install_cache` 在下次更新时兜底清掉，最多占几 MB 磁盘。
+    let _ = std::fs::remove_file(&dest);
+    std::thread::spawn(move || {
+        for _ in 0..10 {
+            if std::fs::remove_file(&dest).is_ok() || !dest.exists() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1500));
+        }
+    });
+
+    Ok(())
+}
+
+/// 下载缓存目录：`%LOCALAPPDATA%\BootFlow\update-cache`
+fn install_cache_dir() -> Result<std::path::PathBuf> {
+    let base = std::env::var_os("LOCALAPPDATA")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    let dir = base.join("BootFlow").join("update-cache");
+    std::fs::create_dir_all(&dir).map_err(|e| AppError::Other(format!("创建缓存目录失败：{e}")))?;
+    Ok(dir)
+}
+
+/// 从下载 URL 里抽出文件名（最后一段）。
+fn asset_name_from_url(url: &str) -> String {
+    url.rsplit('/')
+        .next()
+        .filter(|s| !s.is_empty())
+        .unwrap_or("BootFlow-setup.exe")
+        .to_string()
+}
+
+/// 清理缓存目录里残留的安装包装（上次下载后用户取消安装会留在这里），
+/// 返回删除的文件数。
+pub fn clean_install_cache() -> Result<u32> {
+    let dir = install_cache_dir()?;
+    let mut removed = 0;
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.is_file() {
+                let _ = std::fs::remove_file(&p);
+                removed += 1;
+            }
+        }
+    }
+    Ok(removed)
+}
+
+#[cfg(windows)]
+fn run_installer(path: &std::path::Path) -> Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    let file: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    let verb: Vec<u16> = "open\0".encode_utf16().collect();
+
+    let ret = unsafe {
+        ShellExecuteW(
+            None,
+            PCWSTR(verb.as_ptr()),
+            PCWSTR(file.as_ptr()),
+            PCWSTR::null(),
+            PCWSTR::null(),
+            SW_SHOWNORMAL,
+        )
+    };
+
+    let code = ret.0 as isize;
+    if code <= 32 {
+        return Err(AppError::Other(format!(
+            "没能唤起安装向导（ShellExecute 返回 {code}）"
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn run_installer(_path: &std::path::Path) -> Result<()> {
+    Err(AppError::Other("仅在 Windows 上支持安装".to_string()))
+}
+
+#[cfg(test)]
+mod install_tests {
+    use super::*;
+
+    #[test]
+    fn extracts_file_name_from_url() {
+        assert_eq!(
+            asset_name_from_url("https://github.com/TEGCeylonQi/bootflow/releases/download/v0.1.3/BootFlow_0.1.3_x64-setup.exe"),
+            "BootFlow_0.1.3_x64-setup.exe"
+        );
+    }
+
+    #[test]
+    fn rejects_lookalike_host() {
+        assert!(ensure_trusted_url("https://github.com.evil.test/x").is_err());
+    }
+
+    #[test]
+    fn clean_cache_is_idempotent() {
+        assert!(clean_install_cache().is_ok());
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]

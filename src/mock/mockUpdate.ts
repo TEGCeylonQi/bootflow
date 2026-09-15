@@ -90,3 +90,24 @@ export function mockUpdateResult(): UpdateCheck {
   if (want === 'failed') return MOCK_UPDATE_FAILED
   return MOCK_UPDATE_AVAILABLE
 }
+
+/**
+ * 浏览器开发模式下的「下载并安装」模拟。
+ *
+ * 假装下载完成并成功唤起安装向导。用地址栏参数可以注入失败：
+ *   ?install=fail   下载失败（模拟网络错误）
+ *   ?install=launch 下载成功但唤起安装器失败
+ * 这两种失败分支在真机上都不好随手复现，给 mock 留个口子，
+ * 前端的状态机就不会只照着"一路成功"的样子写。
+ */
+export async function mockInstallUpdate(_url: string): Promise<void> {
+  if (typeof window === 'undefined') return
+
+  const want = new URLSearchParams(window.location.search).get('install')
+  if (want === 'fail') {
+    throw new Error('下载安装包失败（HTTP 504）：网关超时')
+  }
+  if (want === 'launch') {
+    throw new Error('已下载但没能打开安装向导（ShellExecute 返回 5）')
+  }
+}

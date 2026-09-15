@@ -32,6 +32,9 @@ use crate::error::{AppError, Result};
 /// 与其闷头读进内存，不如当场停下。
 const MAX_BODY: usize = 512 * 1024;
 
+/// 安装包下载体积上限。NSIS 安装包正常在 2 MB 上下，给足余量。
+const MAX_DOWNLOAD: usize = 16 * 1024 * 1024;
+
 /// 一次读取的缓冲区大小
 const CHUNK: usize = 8 * 1024;
 
@@ -47,6 +50,15 @@ pub struct HttpResponse {
 pub fn get_text(url: &str, user_agent: &str) -> Result<HttpResponse> {
     let target = HttpsUrl::parse(url)?;
     unsafe { fetch(&target, user_agent) }
+}
+
+/// 下载一个 https 地址的原始字节（不当作文本解读）。
+///
+/// 用途：下载安装包。与 `get_text` 的唯一区别是不做 UTF-8 转码，
+/// 二进制按字节原样拿回。
+pub fn get_bytes(url: &str, user_agent: &str) -> Result<(u16, Vec<u8>)> {
+    let target = HttpsUrl::parse(url)?;
+    unsafe { fetch_bytes(&target, user_agent) }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -145,6 +157,26 @@ fn ctx<T>(r: windows::core::Result<T>, what: &str) -> Result<T> {
 }
 
 unsafe fn fetch(target: &HttpsUrl, user_agent: &str) -> Result<HttpResponse> {
+    let (status, bytes) = fetch_raw(target, user_agent, MAX_BODY)?;
+
+    // GitHub 的响应都是 UTF-8；真出现坏字节也只是说明内容不对，
+    // 让后续的 JSON 解析去报错，比在这里直接失败更有信息量
+    Ok(HttpResponse {
+        status,
+        body: String::from_utf8_lossy(&bytes).into_owned(),
+    })
+}
+
+unsafe fn fetch_bytes(target: &HttpsUrl, user_agent: &str) -> Result<(u16, Vec<u8>)> {
+    fetch_raw(target, user_agent, MAX_DOWNLOAD)
+}
+
+/// 公用的 HTTPS GET：建立会话 → 发请求 → 读响应 → 返回 (状态码, 原始字节)。
+unsafe fn fetch_raw(
+    target: &HttpsUrl,
+    user_agent: &str,
+    limit: usize,
+) -> Result<(u16, Vec<u8>)> {
     let ua = wide(user_agent);
     let host = wide(&target.host);
     let path = wide(&target.path);
@@ -198,9 +230,9 @@ unsafe fn fetch(target: &HttpsUrl, user_agent: &str) -> Result<HttpResponse> {
     )?;
 
     let status = read_status(request.raw())?;
-    let body = read_body(request.raw())?;
+    let body = read_body(request.raw(), limit)?;
 
-    Ok(HttpResponse { status, body })
+    Ok((status, body))
 }
 
 unsafe fn read_status(request: *mut core::ffi::c_void) -> Result<u16> {
@@ -222,7 +254,7 @@ unsafe fn read_status(request: *mut core::ffi::c_void) -> Result<u16> {
     Ok(code as u16)
 }
 
-unsafe fn read_body(request: *mut core::ffi::c_void) -> Result<String> {
+unsafe fn read_body(request: *mut core::ffi::c_void, limit: usize) -> Result<Vec<u8>> {
     let mut buf = vec![0u8; CHUNK];
     let mut raw: Vec<u8> = Vec::with_capacity(CHUNK);
 
@@ -245,17 +277,15 @@ unsafe fn read_body(request: *mut core::ffi::c_void) -> Result<String> {
 
         raw.extend_from_slice(&buf[..read as usize]);
 
-        if raw.len() > MAX_BODY {
+        if raw.len() > limit {
             return Err(AppError::Other(format!(
                 "响应内容超过 {} KB 上限，已中止读取",
-                MAX_BODY / 1024
+                limit / 1024
             )));
         }
     }
 
-    // GitHub 的响应都是 UTF-8；真出现坏字节也只是说明内容不对，
-    // 让后续的 JSON 解析去报错，比在这里直接失败更有信息量
-    Ok(String::from_utf8_lossy(&raw).into_owned())
+    Ok(raw)
 }
 
 #[cfg(test)]

@@ -260,14 +260,34 @@ try {
     return '3 种格式'
   })
 
-  // ——— 6. 无控制台报错 ———
+  // ——— 6. 更新面板：检查 + 下载并安装（v0.1.4 核心新增）———
+  await expect('更新面板能打开并展示新版本', async () => {
+    // mock 数据默认有新版本。入口按钮文案可能是「检查更新」或「0.2.0 可用」，
+    // 取顶栏里那个更新徽标（title 含有“更新”或“最新”）。
+    const entry = page.locator(
+      'button[title*="有没有新版本"], button[title*="发现新版本"], button[title*="询问最新版本"], button[title*="看看有没有新版"]',
+    ).first()
+    await entry.click()
+    // 首次点击会触发一次检查（700ms mock），等面板里的「下载并安装」出现
+    await page.waitForSelector('button:has-text("下载并安装")', { timeout: 15000 })
+    return '新版本面板已展示'
+  })
+
+  await expect('点击「下载并安装」能走完流程', async () => {
+    // mock 模式下 1.4s 后成功，应出现「安装向导已打开」
+    await page.locator('button', { hasText: '下载并安装' }).first().click()
+    await page.waitForSelector('text=安装向导已打开', { timeout: 10000 })
+    return '下载→安装→清理 状态机走通'
+  })
+
+  // ——— 7. 无控制台报错 ———
   await expect('运行期间没有控制台报错', async () => {
     assert(errors.length === 0, `${errors.length} 条报错：${errors[0]?.slice(0, 120)}`)
     return '干净'
   })
 
   /*
-   * ——— 7. 读不到开机日志时的样子 ———
+   * ——— 8. 读不到开机日志时的样子 ———
    *
    * 这不是臆想的边界情况：**本机非提权运行就是这个结果**。
    * 这里断言的是界面没有把"读不到"糊弄成"没有"——顶栏要写「未读取」而不是「—」，

@@ -147,6 +147,22 @@ pub async fn open_boot_log() -> Result<()> {
     spawn_blocking_result(crate::util::shell::open_boot_log).await
 }
 
+/// 下载并拉起安装包（更新流程）。
+///
+/// `url` 必须是检查更新返回的资产下载地址。后端会做两层校验：
+/// 域名必须属于 GitHub，路径必须在本仓库的 Releases 下载段。
+/// 下载完成后用 ShellExecute 打开安装向导，并清理缓存文件。
+#[tauri::command]
+pub async fn install_update(url: String) -> Result<()> {
+    spawn_blocking_result(move || crate::update::install_update(&url)).await
+}
+
+/// 清理「下载更新」留下的缓存安装包。
+#[tauri::command]
+pub async fn clean_install_cache() -> Result<u32> {
+    spawn_blocking_result(crate::update::clean_install_cache).await
+}
+
 /// 把同步函数丢到阻塞线程池并展开双层 Result。
 async fn spawn_blocking_result<T, F>(f: F) -> Result<T>
 where

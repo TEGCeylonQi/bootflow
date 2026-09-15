@@ -143,3 +143,33 @@ export async function openBootLog(): Promise<void> {
   if (!isTauri()) return
   return invokeSafe<void>('open_boot_log')
 }
+
+/**
+ * 下载并拉起新版本的安装包（在检查更新的结果里点「下载并安装」时调用）。
+ *
+ * 后端会先做两层校验（域名白名单 + 本仓库 Releases 前缀），再下载到
+ * `%LOCALAPPDATA%\BootFlow\update-cache`，用系统默认方式打开安装向导，
+ * 随即清理缓存文件。所以这个调用**成功返回时，安装向导已经在屏幕上**。
+ *
+ * 下载失败、唤起安装器失败会抛错（文案已是人话）。
+ * 浏览器开发模式下模拟一段下载耗时后直接成功。
+ */
+export async function installUpdate(url: string): Promise<void> {
+  if (!isTauri()) {
+    const { mockInstallUpdate } = await import('@/mock/mockUpdate')
+    await delay(1400)
+    return mockInstallUpdate(url)
+  }
+  return invokeSafe<void>('install_update', { url })
+}
+
+/**
+ * 清理 `update-cache` 里上次下载残留的安装包，返回清理的文件数。
+ *
+ * 正常情况下安装完成后缓存即被后端清掉；这条命令是给安装向导被取消、
+ * 或下载中断等场景兜底的手动入口。
+ */
+export async function cleanInstallCache(): Promise<number> {
+  if (!isTauri()) return 0
+  return invokeSafe<number>('clean_install_cache')
+}

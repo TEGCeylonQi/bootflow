@@ -50,6 +50,8 @@ pub fn run() {
             commands::check_update,
             commands::open_release_page,
             commands::open_boot_log,
+            commands::install_update,
+            commands::clean_install_cache,
         ])
         .run(tauri::generate_context!())
         .expect("BootFlow 启动失败");

@@ -59,64 +59,33 @@ jobs:
       # `tagName: v__VERSION__` 中的 __VERSION__ 会被替换成 tauri.conf.json
       # 里的 version。所以**改版本号只需要改那一个地方**，tag 名会自动对上。
       # 如果 tag 已经存在（我们就是先打的 tag），它会用那个 tag 建 release。
+      #
+      # Release 正文在这里只给一个简短的占位（防止中间失败时发布页是空的），
+      # 真正的正文——「本版本更新」+ 完整下载说明——由下一步
+      # `tools/release-notes.mjs` 从 RELEASE_NOTES.md 现取并覆盖。
       - name: 构建并发布
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: v__VERSION__
-          releaseName: 'BootFlow v__VERSION__ — 只读体检版'
-          # Release 正文会直接展示给下载的人，口径必须与 README 一致：
-          # 说清「这个版本不写任何系统配置」，也如实写明未验证的范围。
+          releaseName: 'BootFlow v__VERSION__'
+          # 占位正文；别在这里维护长文案了，发布日志的权威来源是 RELEASE_NOTES.md
           releaseBody: |
-            BootFlow 把 Windows 上散落在多处的开机自启机制统一收拢，让你看清
-            「到底是什么拖慢了我的开机」。
-
-            **这是只读体检版，不会修改你系统的任何一项配置。** 所有功能都是读取与呈现。
-
-            **本版本以「可用最高权限」运行**：管理员账号下启动时会弹一次 UAC，
-            自动以管理员身份运行，开机耗时数据能完整读到。**拒绝 UAC 或 UAC 被关闭时，
-            程序仍会以普通权限照常启动**——启动项列表与诊断全部可用，只有开机耗时那一层
-            读不到，界面会如实显示「未读取」并给出「打开系统诊断日志」入口，绝不伪造精度。
-
-            ### 能做什么
-
-            - 扫出四类启动来源：启动文件夹、注册表 Run / RunOnce（含 32 位视图）、
-              带开机/登录触发器的计划任务、开机自启服务；同时检测 AppInit_DLLs 与 IFEO 这类系统级注入
-            - 拆解开机各阶段耗时，并标出拖慢启动的具体项目
-            - 对每一项做三层风险评级，划出「不该动」的禁改区
-            - 识别已经失效的启动项（程序被卸载、路径不存在、网络位置不可达）
-            - 导出报告（JSON / CSV / Markdown）
-
-            ### 下载哪个
-
-            | 文件 | 说明 |
-            |---|---|
-            | `BootFlow___VERSION___x64-setup.exe` | 安装版，用户级安装，**无需管理员权限安装**；运行时自动以可用最高权限启动（管理员账号弹一次 UAC） |
-            | `bootflow-portable-x64.zip` | 便携版，解压直接运行，不写注册表；权限行为与安装版一致 |
-
-            两个都需要 [WebView2 运行时](https://developer.microsoft.com/microsoft-edge/webview2/)。
-            Windows 11 与较新的 Windows 10 已内置，通常无需另行安装。
-
-            ### 关于数据的诚实说明
-
-            界面上的耗时数字分三档：**实测**（来自系统开机性能日志）、**估算**（只给位置不给时长）、
-            **未知**（读不到）。读不到时会明确告诉你「需要管理员权限」，而不是显示成「开机 0 秒」。
-
-            未提权运行时，开机耗时那一层数据是读不到的——这是 Windows 事件日志的权限设计决定的，
-            不是故障。启动项列表本身不受影响，它直接从注册表、文件系统和任务计划库里读。
-
-            ### 已知限制
-
-            - 仅在 Windows 11 24H2 上验证过。Windows 10 / Server / ARM64 **未经验证**
-            - 空窗口需要 WebView2；若系统过旧可能提示安装
-            - 未覆盖 BHO、UWP StartupTask、Winlogon、驱动类自启
-
-            详见 [README](https://github.com/TEGCeylonQi/bootflow#readme)。
-          # 直接发布，不留在草稿箱。改动内容都过了一遍去私人化检查，
-          # 且发布本身可以随时撤回（Release 可改为草稿）。
+            BootFlow v__VERSION__ 已发布，本版本更新内容见下方「本版本更新」。
           releaseDraft: false
           prerelease: false
+
+      # 用发布日志覆盖 Release 正文：从 RELEASE_NOTES.md 取当前版本的
+      # 「本版本更新」段，拼上通用介绍，写入发布页。
+      #
+      # 更新日志的权威来源是发布页，README 只留大版本路线。
+      # 找不到当前版本的段落时脚本会报错退出，让 CI 失败而不是发个空日志。
+      - name: 更新发布页正文为本版本更新日志
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node tools/release-notes.mjs "${{ github.ref_name }}"
 
       # 便携版：把编译出的 exe 单独打包成 zip。
       #

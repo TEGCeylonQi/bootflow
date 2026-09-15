@@ -8,9 +8,9 @@ import {
   RefreshCw,
   Sparkles,
 } from 'lucide-react'
-import { openReleasePage } from '@/api/commands'
+import { cleanInstallCache, installUpdate, openReleasePage } from '@/api/commands'
 import { selectHasUpdate, useUpdateStore } from '@/store/useUpdateStore'
-import type { UpdateCheck } from '@/types/update'
+import type { UpdateCheck, ReleaseAsset } from '@/types/update'
 
 const OK = '#3fb950'
 const WARN = '#d29922'
@@ -226,6 +226,34 @@ function Checking() {
 }
 
 function Available({ result, onOpenPage }: { result: UpdateCheck; onOpenPage: () => void }) {
+  // 安装流程状态机：idle → downloading → done / error → idle（可重试）。
+  // 注意没有独立的 "installing" 档：后端的 install_update 一次调用就完成
+  // 「下载 → 拉起安装向导 → 清理缓存」，中间没有可插桩的节点，就不假装有。
+  const [installState, setInstallState] = useState<'idle' | 'downloading' | 'done' | 'error'>(
+    'idle',
+  )
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
+
+  // 默认挑排在最前的产物（后端已把安装包排到第一位）
+  const [chosen, setChosen] = useState<ReleaseAsset | null>(result.assets[0] ?? null)
+  const busy = installState === 'downloading'
+
+  const download = async () => {
+    if (!chosen || busy) return
+    setInstallState('downloading')
+    setErrorMsg(null)
+    try {
+      await installUpdate(chosen.url)
+      setInstallState('done')
+    } catch (e) {
+      setErrorMsg(e instanceof Error ? e.message : String(e))
+      setInstallState('error')
+    }
+  }
+
+  // 退出面板时复位：下次打开又是一副干净的样子，不会残留"下载完成"的旧状态
+  useEffect(() => () => setInstallState('idle'), [])
+
   return (
     <div className="space-y-3">
       <div>
@@ -252,30 +280,92 @@ function Available({ result, onOpenPage }: { result: UpdateCheck; onOpenPage: ()
         </div>
       )}
 
-      {result.assets.length > 0 && (
-        <div>
-          <div className="mb-1 text-2xs text-ink-dim">这一版发布了这些文件</div>
-          <div className="space-y-1">
-            {result.assets.map((a) => (
-              <div key={a.name} className="flex items-center justify-between gap-2 text-2xs">
-                <span className="truncate font-mono text-ink-muted" title={a.name}>
-                  {a.name}
-                </span>
-                <span className="shrink-0 text-ink-dim">{fmtSize(a.size)}</span>
-              </div>
-            ))}
+      <div>
+        <div className="mb-1 text-2xs text-ink-dim">这一版发布了这些文件</div>
+        <div className="space-y-1">
+          {result.assets.map((a) => (
+            <div key={a.name} className="flex items-center justify-between gap-2 text-2xs">
+              <span className="truncate font-mono text-ink-muted" title={a.name}>
+                {a.name}
+              </span>
+              <span className="shrink-0 text-ink-dim">{fmtSize(a.size)}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* 下载并安装的入口 */}
+      {installState === 'done' ? (
+        <div className="flex items-center gap-2 rounded-md border border-line bg-base px-2.5 py-2 text-2xs text-ink-muted">
+          <CheckCircle2 size={13} style={{ color: OK }} />
+          安装向导已打开，完成安装后自动清理缓存
+        </div>
+      ) : installState === 'error' ? (
+        <div className="space-y-2">
+          <div className="flex items-start gap-2 rounded-md border border-line bg-base px-2.5 py-2 text-2xs leading-relaxed text-ink-muted">
+            <AlertTriangle size={13} className="mt-0.5 shrink-0" style={{ color: WARN }} />
+            <div className="min-w-0">
+              <div className="text-mini text-ink">下载并安装没有成功</div>
+              <div className="mt-0.5 break-words">{errorMsg}</div>
+              <div className="mt-1 text-ink-dim">可以选择重试，或打开发布页手动下载。</div>
+            </div>
           </div>
+          <PrimaryButton onClick={download} disabled={!chosen || busy}>
+            <RefreshCw size={13} />
+            重试
+          </PrimaryButton>
+        </div>
+      ) : installState === 'downloading' ? (
+        <div className="flex items-center gap-2 text-2xs text-ink-muted">
+          <Loader2 size={13} className="animate-spin" />
+          正在下载并准备安装…
+        </div>
+      ) : (
+        <div className="flex items-center gap-2">
+          <PrimaryButton onClick={download} disabled={!chosen || busy}>
+            <Download size={13} />
+            下载并安装
+          </PrimaryButton>
+          {result.assets.length > 1 && (
+            <select
+              value={chosen?.name ?? ''}
+              onChange={(e) => {
+                const hit = result.assets.find((a) => a.name === e.target.value)
+                if (hit) setChosen(hit)
+              }}
+              disabled={busy}
+              className="min-w-0 flex-1 rounded-md border border-line bg-elevated px-1.5 py-1 text-2xs text-ink-muted"
+              aria-label="选择下载的安装包"
+            >
+              {result.assets.map((a) => (
+                <option key={a.name} value={a.name}>
+                  {a.name}
+                </option>
+              ))}
+            </select>
+          )}
         </div>
       )}
 
-      <PrimaryButton onClick={onOpenPage} disabled={!result.releaseUrl}>
-        <ExternalLink size={13} />
-        打开发布页下载
-      </PrimaryButton>
-
       <p className="text-2xs leading-relaxed text-ink-dim">
         下载后直接运行安装包覆盖安装即可，启动项配置不受影响。
+        安装完成后缓存会自动清理。
       </p>
+
+      <div className="flex items-center justify-between">
+        <SecondaryButton onClick={onOpenPage} disabled={!result.releaseUrl}>
+          <ExternalLink size={12} />
+          打开发布页
+        </SecondaryButton>
+        <button
+          type="button"
+          onClick={() => void cleanInstallCache().then(() => setInstallState('idle'))}
+          className="text-2xs text-ink-dim transition-colors hover:text-ink-muted"
+          title="清理上次下载残留的安装包"
+        >
+          清理下载缓存
+        </button>
+      </div>
     </div>
   )
 }
@@ -387,12 +477,21 @@ function PrimaryButton({
   )
 }
 
-function SecondaryButton({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
+function SecondaryButton({
+  onClick,
+  disabled,
+  children,
+}: {
+  onClick: () => void
+  disabled?: boolean
+  children: React.ReactNode
+}) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className="flex items-center gap-1.5 rounded-md border border-line bg-elevated px-2.5 py-1 text-2xs text-ink transition-colors hover:border-accent hover:text-accent"
+      disabled={disabled}
+      className="flex items-center gap-1.5 rounded-md border border-line bg-elevated px-2.5 py-1 text-2xs text-ink transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
     >
       {children}
     </button>

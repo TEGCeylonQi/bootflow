@@ -30,5 +30,8 @@ npm-debug.log*
 # 界面冒烟测试失败时自动留下的截图（仅在断言失败时生成，正常情况不留）
 tools/*.png
 
+# 本地调试版 exe（`cargo build` 或直接跑出来的）
+bootflow.exe
+
 # WorkBuddy 项目数据（计划、记忆、本机工具链安装记录）
 .workbuddy/

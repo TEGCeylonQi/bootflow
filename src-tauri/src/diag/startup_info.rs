@@ -275,12 +275,10 @@ fn child_text<'a>(body: &'a str, tags: &[&str]) -> Option<&'a str> {
                 from = start + open.len();
                 continue;
             }
-            let Some(gt) = after.find('>') else { return None };
+            let gt = after.find('>')?;
             let value_start = start + open.len() + gt + 1;
             let close = format!("</{}>", tag.to_ascii_lowercase());
-            let Some(close_rel) = lower[value_start..].find(&close) else {
-                return None;
-            };
+            let close_rel = lower[value_start..].find(&close)?;
             return Some(&body[value_start..value_start + close_rel]);
         }
     }

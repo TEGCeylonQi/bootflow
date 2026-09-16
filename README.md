@@ -146,12 +146,23 @@ npm run tauri build    # 产出安装包
 Issues 与 PR 都欢迎。提交前跑与 CI 相同的检查：
 
 ```bash
+npm run verify         # 一条命令跑完下面全部四道闸门
+```
+
+拆开看就是这四道（`verify` 只是把它们顺序执行）：
+
+```bash
 npm run check          # 类型 + 样式令牌 + 前后端数据契约
 npm run ui:smoke       # 界面冒烟（需先 npm i -D playwright-core）
-cd src-tauri
-cargo clippy --all-targets -- -D warnings
-cargo test
+npm run check:rust     # Rust：clippy（警告即失败）+ 单元测试
 ```
+
+**为什么强调「一条命令跑完」**：`cargo check` 与 `cargo clippy` 是**两套 lint**。
+rustc 侧的 `dead_code` 之类 `cargo check` 会报，而 clippy 侧的
+`items_after_test_module`、`question_mark` 它一个字都不说。v0.2.0 开发期
+CI 因此连红三次（run #11 / #12 / #13）而本地一路显示「零告警」——
+**清单上写着 clippy、但没跑，等于没有这道闸**。`npm run check:rust` 会自己找
+cargo（本机装在用户级 `~/.cargo`，不在默认 PATH 里），找不到时给出可照抄的提示。
 
 CI：`windows-latest` 跑 Rust（真实 Windows 系统调用），`ubuntu` 跑前端。读取真实 Windows 的测试在 Windows runner 上执行。
 

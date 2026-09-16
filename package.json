@@ -11,7 +11,9 @@
     "tauri": "tauri",
     "ui:check": "node tools/ui-check.mjs",
     "ui:smoke": "node tools/ui-smoke.mjs",
-    "check": "tsc --noEmit && node tools/ui-check.mjs && node tools/check-version.mjs"
+    "check": "tsc --noEmit && node tools/ui-check.mjs && node tools/check-version.mjs",
+    "check:rust": "node tools/verify-rust.mjs",
+    "verify": "npm run check && npm run ui:smoke && npm run check:rust"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",

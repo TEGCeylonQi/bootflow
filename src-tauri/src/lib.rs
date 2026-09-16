@@ -35,30 +35,6 @@ mod writers;
 
 pub use error::AppError;
 
-/// 单测共享的「进程级环境变量」串行锁。
-///
-/// `std::env::set_var` 改的是**整个进程**的环境，而 cargo 的测试默认是多线程并行。
-/// 只要有两个用例分别改同一个变量（`APPDATA` / `LOCALAPPDATA`），它们就会互相
-/// 读到对方设的目录——表现为「这次跑绿、下次跑红」的随机失败，最难查。
-///
-/// 要点是**锁必须按变量共享，不能按模块各持一把**：
-/// 两个模块各持一把却改同一个变量，等于没锁，谁也拦不住谁。
-/// `snapshot::store` 与 `snapshot::changelog` 之前正是这么写的，已统一到这里。
-#[cfg(test)]
-pub(crate) mod testenv {
-    use std::sync::{Mutex, MutexGuard};
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    /// 所有会改动读写型进程环境变量的用例都必须持有它。
-    ///
-    /// 上一次持有者 panic 会让锁「中毒」；这里取回内部值继续用，
-    /// 免得一次偶发失败把后面所有用例连带变成连环失败。
-    pub(crate) fn lock() -> MutexGuard<'static, ()> {
-        ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
-    }
-}
-
 /// 开机自启的静默记账入口：追加一条开机耗时记录。失败只记日志，不弹窗、不阻塞。
 ///
 /// 供 `main.rs` 的 `--mark-boot` 分支调用。也常作为测试入口。
@@ -126,4 +102,34 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("BootFlow 启动失败");
+}
+
+/// 单测共享的「进程级环境变量」串行锁。
+///
+/// `std::env::set_var` 改的是**整个进程**的环境，而 cargo 的测试默认是多线程并行。
+/// 只要有两个用例分别改同一个变量（`APPDATA` / `LOCALAPPDATA`），它们就会互相
+/// 读到对方设的目录——表现为「这次跑绿、下次跑红」的随机失败，最难查。
+///
+/// 要点是**锁必须按变量共享，不能按模块各持一把**：
+/// 两个模块各持一把却改同一个变量，等于没锁，谁也拦不住谁。
+/// `snapshot::store` 与 `snapshot::changelog` 之前正是这么写的，已统一到这里。
+///
+/// 【为什么放在文件最末尾】它是 `#[cfg(test)]` 的测试基建，而上面几个
+/// （`record_boot_marker` / `reconcile_boot_marker_autostart` / `run`）都是
+/// 生产代码。把测试模块插在生产代码中间会触发 clippy 的 `items_after_test_module`
+/// ——「测试模块之后还有 item」——CI 是 `-D warnings`，会直接红。
+/// 组织上的规矩：**测试基建一律排在所有生产 item 之后**。
+#[cfg(test)]
+pub(crate) mod testenv {
+    use std::sync::{Mutex, MutexGuard};
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    /// 所有会改动读写型进程环境变量的用例都必须持有它。
+    ///
+    /// 上一次持有者 panic 会让锁「中毒」；这里取回内部值继续用，
+    /// 免得一次偶发失败把后面所有用例连带变成连环失败。
+    pub(crate) fn lock() -> MutexGuard<'static, ()> {
+        ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
 }

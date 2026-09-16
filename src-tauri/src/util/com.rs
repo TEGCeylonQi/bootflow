@@ -7,6 +7,41 @@
 //!
 //! 这也是为什么把这个守卫做成 RAII：中途 `?` 提前返回时能自动 `CoUninitialize`，
 //! 不会因为错误路径漏掉清理。
+//!
+//! ## ⚠️ 使用它的函数有一条硬规矩：COM 对象必须活不过守卫
+//!
+//! `ComGuard` 析构时会调 `CoUninitialize()`；**那会把 COM 的引用计数清零，
+//! 并卸载本进程加载过的进程内 COM 服务器 DLL**（例如计划任务的 `taskschd.dll`）。
+//! 此后任何残留的 COM 接口指针再去调 `Release()`，就是跳进一段**已卸载的代码**，
+//! 直接 `0xC0000005` 段错误。
+//!
+//! 最容易踩的写法是**把 COM 调用写成函数的尾表达式**：
+//!
+//! ```ignore
+//! fn exists(path: &str) -> bool {
+//!     let _com = ComGuard::new();          // 先声明 → 最后析构
+//!     let folder = get_folder(/* … */);
+//!     unsafe { folder.GetTask(&path.into()) }.is_ok()   // ✗ 危险
+//! }
+//! ```
+//!
+//! 尾表达式里的临时 `Result<IRegisteredTask>` **不**在语句结束处析构，而是活到
+//! **函数作用域末尾**——排在 `_com` 之后。于是 `Release()` 落在 `CoUninitialize()`
+//! 之后，进程**启动即崩且没有任何输出**（发布版连控制台都没有，表现为"双击没反应"）。
+//!
+//! 而且它对代码布局敏感：随手加一行日志就可能让崩溃消失，看着像"已经修好了"。
+//! **判别与正确写法**：凡是会在返回路径上携带 COM 对象的表达式，一律先落地成
+//! 普通值（`bool` / `String` / 自己的结构体），并**显式 `drop`**：
+//!
+//! ```ignore
+//! let task = unsafe { folder.GetTask(&path.into()) };
+//! let found = task.is_ok();
+//! drop(task);      // 必须先于 _com
+//! drop(folder);
+//! found
+//! ```
+//!
+//! 语句形式（`let x = unsafe { … }?;`）是安全的——临时值在**语句**结束就释放了。
 
 #[cfg(windows)]
 mod imp {

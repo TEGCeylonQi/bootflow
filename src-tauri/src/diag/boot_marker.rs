@@ -538,7 +538,20 @@ mod task_impl {
             return false;
         };
 
-        unsafe { folder.GetTask(&BSTR::from(task_path)) }.is_ok()
+        // ⚠️ 这里**不能**写成尾表达式 `unsafe { folder.GetTask(..) }.is_ok()`。
+        // 尾表达式里的临时 `Result<IRegisteredTask>` 不会在语句结束处析构，
+        // 而是活到**函数作用域末尾**——排在 `_com` 之后。于是这个任务的
+        // `Release()` 落在 `CoUninitialize()` 之后，而 CoUninitialize 已经卸载了
+        // 进程内 COM 服务器 `taskschd.dll`，Release 等于跳进已卸载的代码段：
+        // 进程**启动即崩（0xC0000005）且零输出**，看起来就是"双击没反应"。
+        // 这也是 v0.2.0 发布版打不开的根因。详见 `util::com` 模块头的说明。
+        let task = unsafe { folder.GetTask(&BSTR::from(task_path)) };
+        let found = task.is_ok();
+        // 显式释放，保证三个 COM 对象都先于 `_com` 析构。
+        drop(task);
+        drop(folder);
+        drop(service);
+        found
     }
 
     /// 删除自记账任务。任务不存在时视为成功（幂等）。

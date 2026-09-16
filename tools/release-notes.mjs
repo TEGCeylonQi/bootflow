@@ -5,6 +5,13 @@
  *
  * 用法（发布流水线里调用）：
  *   node tools/release-notes.mjs <tag>          # tag 形如 v0.1.4
+ *   node tools/release-notes.mjs <tag> --dry-run # 只打印正文，不碰 Release
+ *
+ * `--dry-run` 存在的理由：正文里有大半是「通用说明」这种每版都一样的段落，
+ * 最容易悄悄过时——本项目的通用段在 v0.2.0 之前一直写着「这是只读体检版，
+ * 不会修改系统任何一项配置」，而那个版本恰恰第一次能改系统。发布页是对外的，
+ * 自相矛盾的文案会直接伤信任。**tag 还没打时就能本地预览一遍正文**，
+ * 是让这类过时文案在发版前就被看见的唯一办法。
  *
  * 为什么要这一步：
  *   Release 正文同时包含两类内容——「本版本改了什么」（每版不同）与
@@ -20,10 +27,12 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
-const TAG = process.argv[2]
+const ARGS = process.argv.slice(2)
+const DRY_RUN = ARGS.includes('--dry-run')
+const TAG = ARGS.find((a) => !a.startsWith('--'))
 
 if (!TAG || !/^v\d+\.\d+\.\d+/.test(TAG)) {
-  console.error('用法：node tools/release-notes.mjs <v0.1.4>')
+  console.error('用法：node tools/release-notes.mjs <v0.1.4> [--dry-run]')
   process.exit(2)
 }
 
@@ -63,6 +72,12 @@ if (!section) {
 }
 
 // ── 2. 通用说明（与 src-tauri 里 update.rs 的「下载哪个」保持一致）──
+//
+// ⚠️ 这一段描述的是**当前最新版本的能力与权限行为**，不是历史。发新版本时
+// 必须回头核对一遍——它在 v0.2.0 之前一直写着「这是只读体检版，不会修改
+// 系统任何一项配置」和「以可用最高权限运行」，而 v0.2.0 起应用已经能改系统、
+// 权限也早已回退成 asInvoker。**旧文案会让发布页一边说「不会改你的系统」、
+// 一边在更新日志里写「第一次可以真正停用启动项」，自相矛盾。**
 const generic = `## 这是什么
 
 BootFlow 把 Windows 上散落在多处的开机自启机制统一收拢，让你看清
@@ -74,17 +89,27 @@ BootFlow 把 Windows 上散落在多处的开机自启机制统一收拢，让�
 - 拆解开机各阶段耗时，标出拖慢启动的具体项目
 - 对每一项做三层风险评级，划出「不该动」的禁改区
 - 识别失效启动项（程序被卸载、路径不存在、网络位置不可达）
+- 对每一项给出「启动影响」（CPU 时间与磁盘读写量）与「开机后第几秒出现」
 - 导出报告（JSON / CSV / Markdown）
 
-**这是只读体检版，不会修改系统任何一项配置**；以「可用最高权限」运行，
-拒绝 UAC 或未提权时仍以普通权限启动，只有开机时长读不到（界面如实说明）。
+**默认什么都不改**：所有扫描与体检都是只读的。从 v0.2.0 起可以真正停用/启用
+启动项，但每一个写操作都必须先看一眼预演、动手前自动建立快照、随时可一键回滚；
+服务栈、Winlogon、explorer、安全中心、驱动这类系统关键项在任何版本都不提供写入口。
+
+程序以**当前用户权限**运行（manifest 为 asInvoker），**不请求提权、不弹 UAC**，
+用户级安装也不要求管理员。代价是少数数据读不到：分段耗时与「启动影响」所在的
+事件通道 ACL 只给了管理员。读不到时界面会如实说明并给出「以管理员身份重开」入口，
+不会用空数据充数。核心的开机时长读取走 System 通道，普通权限即可。
 
 ## 下载哪个
 
 | 文件 | 说明 |
 |---|---|
-| \`BootFlow_${VERSION}_x64-setup.exe\` | 安装版，用户级安装，无需管理员权限；运行时自动以可用最高权限启动 |
-| \`bootflow-portable-x64.zip\` | 便携版，解压直接运行，不写注册表；权限行为与安装版一致 |
+| \`BootFlow_${VERSION}_x64-setup.exe\` | 安装版，**用户级安装、无需管理员权限**，双击即装 |
+| \`bootflow-portable-x64.zip\` | 便携版，解压直接运行，不写注册表 |
+
+两个都**不请求提权、不弹 UAC**（manifest 为 asInvoker），权限行为完全一致。
+需要管理员才能读的那几项数据，在程序内提供「以管理员身份重开」入口，由你决定要不要提。
 
 两个都需要 [WebView2 运行时](https://developer.microsoft.com/microsoft-edge/webview2/)，
 Windows 11 与较新的 Windows 10 已内置。
@@ -94,6 +119,10 @@ Windows 11 与较新的 Windows 10 已内置。
 - 仅在 Windows 11 24H2 上验证过；Windows 10 / Server / ARM64 未验证
 - 空窗口需要 WebView2；系统过旧可能提示安装
 - 尚未覆盖 BHO、UWP StartupTask、Winlogon、驱动类自启
+- **写能力（停用/启用启动项、回滚）尚未在真机上走完一次完整的
+  「写入 → 回滚」闭环**，相关测试全部是纯逻辑、不触真实注册表。
+  界面与命令都已接通，但这是第一个能改用户系统的版本，
+  **首次使用建议先在虚拟机里试一遍**；验证完成后这一条会移除
 
 详见 [README](https://github.com/TEGCeylonQi/bootflow#readme)。`
 
@@ -101,6 +130,13 @@ const body =
   `# BootFlow v${VERSION}\n\n## 本版本更新\n\n${section}\n\n---\n\n${generic}\n`
 
 // ── 3. 写临时文件 + gh release edit ──────────────────────────
+if (DRY_RUN) {
+  // 只看不写：发布页是对外的，正文该在打 tag 之前就能被核对。
+  console.log(body)
+  console.log(`[dry-run] 以上是 Release ${TAG} 将要写入的正文，未调用 gh。`)
+  process.exit(0)
+}
+
 const os = await import('node:os')
 const fs = await import('node:fs')
 const path = await import('node:path')

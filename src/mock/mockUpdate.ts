@@ -16,43 +16,43 @@ import type { UpdateCheck } from '@/types/update'
 
 const NOTES = `### 这一版做了什么
 
-- **从「只看」变成「能改」**：编排模式里勾选要处理的项，点「应用」先看到一份
-  预演（改前 → 改后、会发生什么、风险高低），动手前自动建立快照，随时可一键回滚
-- 不可逆的系统关键项（服务栈、Winlogon、explorer、安全中心、驱动）仍然不给碰
-- 新增「启动影响」（CPU 时间与磁盘读写量，与任务管理器同源）与
-  「开机后第几秒出现」；两者与「启动花了多久」是三个不同的问题，界面分开呈现
-- 「每次开机的总时长」可以自己记了（可选，默认关闭）
+- **耗时分析页重做**：相位、每项的出现时刻、每项的资源占用、最近几次开机的
+  总时长各就各位，四条数据通路在同一屏内读完；长解释收进折叠的「数据口径与来源」
+- 修正「启动影响」图的条长口径：改为 CPU 时间（有真实刻度），
+  不再把 CPU 与磁盘折算成一个无量纲分数
+- 其余能力不变：全来源扫描、风险分级与处置建议、可逆的启用 / 停用
+  （预演 → 快照 → 回滚）
 
 ### 下载哪个
 
 | 文件 | 说明 |
 |---|---|
-| \`BootFlow_0.2.0_x64-setup.exe\` | 安装版，用户级安装，不需要管理员权限 |
+| \`BootFlow_0.2.1_x64-setup.exe\` | 安装版，用户级安装，不需要管理员权限 |
 | \`bootflow-portable-x64.zip\` | 便携版，解压直接运行 |
 
 **默认什么都不改**：体检始终是只读的。写操作要先看预演、先建快照、可一键回滚，
 且程序不请求提权、不弹 UAC。`
 
-const CHECKED_AT = '2026-09-15T00:40:00Z'
+const CHECKED_AT = '2026-09-16T05:20:00Z'
 
 export const MOCK_UPDATE_AVAILABLE: UpdateCheck = {
   status: 'available',
-  currentVersion: '0.1.1',
-  latestVersion: '0.2.0',
-  releaseName: 'BootFlow v0.2.0 — 可写可控',
-  releaseUrl: 'https://github.com/TEGCeylonQi/bootflow/releases/tag/v0.2.0',
-  publishedAt: '2026-09-15T00:30:00Z',
+  currentVersion: '0.2.0',
+  latestVersion: '0.2.1',
+  releaseName: 'BootFlow v0.2.1 — 耗时分析重做',
+  releaseUrl: 'https://github.com/TEGCeylonQi/bootflow/releases/tag/v0.2.1',
+  publishedAt: '2026-09-16T05:00:00Z',
   notes: NOTES,
   assets: [
     {
-      name: 'BootFlow_0.2.0_x64-setup.exe',
-      url: 'https://github.com/TEGCeylonQi/bootflow/releases/download/v0.2.0/BootFlow_0.2.0_x64-setup.exe',
-      size: 1_648_640,
+      name: 'BootFlow_0.2.1_x64-setup.exe',
+      url: 'https://github.com/TEGCeylonQi/bootflow/releases/download/v0.2.1/BootFlow_0.2.1_x64-setup.exe',
+      size: 1_793_024,
     },
     {
       name: 'bootflow-portable-x64.zip',
-      url: 'https://github.com/TEGCeylonQi/bootflow/releases/download/v0.2.0/bootflow-portable-x64.zip',
-      size: 1_907_916,
+      url: 'https://github.com/TEGCeylonQi/bootflow/releases/download/v0.2.1/bootflow-portable-x64.zip',
+      size: 1_950_000,
     },
   ],
   reason: null,
@@ -61,11 +61,11 @@ export const MOCK_UPDATE_AVAILABLE: UpdateCheck = {
 
 export const MOCK_UPDATE_LATEST: UpdateCheck = {
   status: 'upToDate',
-  currentVersion: '0.1.1',
-  latestVersion: '0.1.1',
-  releaseName: 'BootFlow v0.1.1 — 更新检测',
-  releaseUrl: 'https://github.com/TEGCeylonQi/bootflow/releases/tag/v0.1.1',
-  publishedAt: '2026-09-15T00:10:00Z',
+  currentVersion: '0.2.1',
+  latestVersion: '0.2.1',
+  releaseName: 'BootFlow v0.2.1 — 耗时分析重做',
+  releaseUrl: 'https://github.com/TEGCeylonQi/bootflow/releases/tag/v0.2.1',
+  publishedAt: '2026-09-16T05:00:00Z',
   notes: null,
   assets: [],
   reason: null,
@@ -74,7 +74,7 @@ export const MOCK_UPDATE_LATEST: UpdateCheck = {
 
 export const MOCK_UPDATE_FAILED: UpdateCheck = {
   status: 'failed',
-  currentVersion: '0.1.1',
+  currentVersion: '0.2.1',
   latestVersion: null,
   releaseName: null,
   releaseUrl: null,

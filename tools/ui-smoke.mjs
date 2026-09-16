@@ -247,7 +247,12 @@ try {
    */
   await expect('耗时分析给出总时长与「多花的时间」口径', async () => {
     assert((await page.locator('text=本次开机用时').count()) > 0, '没有开机总时长')
+    // 结论行要能一眼看出"这段时间卡在哪一段"，而不是只有一根总长条
+    assert((await page.locator('text=/最慢的一段/').count()) > 0, '没有指出最慢的阶段')
     assert((await page.locator('text=多花的时间').count()) > 0, '慢启动没有按"多花的时间"解释')
+    const chart = page.locator('[data-chart="boot-phases"]')
+    assert((await chart.count()) > 0, '各阶段图的容器不存在')
+    assert((await chart.locator('svg text').count()) > 2, '各阶段图里没有刻度文字，说明没画出来')
     return '口径正确'
   })
 
@@ -275,6 +280,10 @@ try {
    * （"第几秒出现"），只有被判慢的项才有真正的耗时。两条通路都要能在界面上
    * 看到，而且**必须写清楚出现时刻不是耗时**——否则用户会把 12.4s 读成
    * "这一项拖慢了 12.4 秒"，那是把整个开机时长安在一项头上。
+   *
+   * 界面已从"手写列表"改成图表（共享开机时间轴 + 相位背景带），所以这里
+   * 断言的是**图真的画出来了**：容器在、SVG 里的图元与刻度文字非空。
+   * 只断言标题在，等于允许它渲染成一张空白图——那正是要防的。
    */
   await expect('耗时分析把开销拆到单项（每项在开机后第几秒出现）', async () => {
     assert((await page.locator('text=每项在开机后第几秒出现').count()) > 0, '没有单项出现时刻时间轴')
@@ -282,11 +291,11 @@ try {
       (await page.locator('text=/进程创建时刻/').count()) > 0,
       '没有标明数据来源是内核记录的进程创建时刻',
     )
-    // 归因成功的项必须真的画出来，不能只有一个空壳标题。
-    // 每行是一个按钮，title 里带着"内核记录的进程创建时刻"。
-    const rows = await page.locator('button[title*="内核记录的进程创建时刻"]').count()
-    assert(rows > 0, '时间轴没有任何一行，说明归因结果没渲染出来')
-    return `已归因并渲染 ${rows} 行`
+    const chart = page.locator('[data-chart="item-timeline"]')
+    assert((await chart.count()) > 0, '单项时间轴的图表容器不存在')
+    const drawn = await chart.locator('svg text').count()
+    assert(drawn > 2, `时间轴图里只有 ${drawn} 个刻度/标签，说明数据没画进去`)
+    return `已渲染，图内含 ${drawn} 个刻度文字`
   })
 
   /*
@@ -327,9 +336,11 @@ try {
       (await page.locator('text=/与任务管理器同源/').count()) > 0,
       '没有标明数据与任务管理器同源',
     )
-    const rows = await page.locator('button[title*="启动影响："]').count()
-    assert(rows > 0, '启动影响一行都没渲染出来')
-    return `已渲染 ${rows} 行`
+    const chart = page.locator('[data-chart="item-impact"]')
+    assert((await chart.count()) > 0, '启动影响排行图的容器不存在')
+    const drawn = await chart.locator('svg text').count()
+    assert(drawn > 2, `启动影响图里只有 ${drawn} 个刻度/标签，说明数据没画进去`)
+    return `已渲染，图内含 ${drawn} 个刻度文字`
   })
 
   /*
@@ -347,6 +358,40 @@ try {
       '没有把这一栏的性质说成"资源占用"',
     )
     return '口径已写明'
+  })
+
+  /*
+   * ——— 4c-4. 长解释必须收进二级折叠，但**必须收得住也拿得出** ———
+   *
+   * 这一页被抱怨过"冗余杂乱"：四张图下面各堆三五段说明，图表被文字淹掉。
+   * 现在一级界面每张图只留一行口径，三句话以上的解释统一进「数据口径与来源」。
+   *
+   * 断言两件事：默认收起（不再和图表抢注意力）、点开后那些解释**真的在里面**
+   * ——收起不能变成删掉，"为什么给不出单项耗时"这条解释一旦丢了，
+   * 用户就只能靠猜。
+   */
+  await expect('长解释收进「数据口径与来源」折叠区，且可展开', async () => {
+    const head = page.locator('button:has-text("数据口径与来源")').first()
+    assert((await head.count()) > 0, '没有口径说明折叠区')
+    assert(
+      (await page.locator('text=/四条互不相干的通路/').count()) === 0,
+      '默认就是展开的——长文字又和图表挤在一起了',
+    )
+
+    await head.click()
+    await page.waitForTimeout(200)
+    assert(
+      (await page.locator('text=/四条互不相干的通路/').count()) > 0,
+      '展开后没有四条通路的说明',
+    )
+    assert(
+      (await page.locator('text=/为什么给不出/').count()) > 0,
+      '展开后没有"为什么给不出单项耗时"的解释',
+    )
+    // 收起，别把展开态留给后面的断言
+    await head.click()
+    await page.waitForTimeout(200)
+    return '默认收起 · 展开有料'
   })
 
   await expect('详情面板单列「启动影响」一栏', async () => {

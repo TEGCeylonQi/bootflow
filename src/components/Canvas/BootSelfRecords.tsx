@@ -1,39 +1,35 @@
 import { useMemo } from 'react'
 import ReactECharts from 'echarts-for-react'
 import type { BootRecord } from '@/types/model'
+import { ChartCard } from './ChartCard'
 
 /**
- * 「开机自记账」历史图。
+ * 「最近几次开机用时」—— BootFlow 自己记的总时长。
  *
- * ## 它回答的是什么
+ * ## 它回答什么、不回答什么
  *
- * 「我最近几次开机各用了多久」——一根总长度条，每次开机一个柱子。
- *
- * ## 它**不**回答什么（诚实边界，必须写在界面上）
- *
- * 「每一段各花了多久 / 哪个启动项拖慢的」——那是系统事件日志（Event 100/103）
- * 才有的数据，而且只在完整引导 + 系统判定偏慢时才写。自记账拿不到，
- * 所以这里**只有总时长，没有分段**。把总时长画成一根条是如实的；
+ * 回答：「我最近几次开机各用了多久」。不回答：「每一段各花了多久 / 哪个启动项
+ * 拖慢的」——那是系统事件日志（Event 100/103）才有的数据，自记账拿不到，
+ * 所以这里**只有总时长，没有分段**。把总时长画成一根柱是如实的；
  * 编几段"大概是这样"堆上去就是把估算说成实测。
  *
  * ## 为什么这条通路重要
  *
  * 系统那条通路在开了快速启动的机器上可以几个月一条记录都没有（实测某台
- * 403 天零记录）。自记账在每次登录时由 BootFlow 的自启条目静默跑一次，
- * 普通权限、不依赖任何系统策略，所以这里**总能画出点东西**——
- * 前提是用户装好之后至少开机过一次。
+ * 403 天零记录）。自记账每次登录静默跑一次，普通权限、不依赖任何系统策略，
+ * 所以这里**总能画出点东西**——前提是用户装好之后至少开机过一次。
  */
 
 const AXIS_TEXT = '#8b949e'
 const SPLIT_LINE = '#21262d'
-/** 柱色。与画布 accent 一致，避免多引一套色板。 */
+/** 实测口径的柱色。与画布 accent 一致，避免多引一套色板。 */
 const BAR_COLOR = '#58a6ff'
 /**
  * 推算口径的柱色（灰）。
  *
- * 「实测 / 估算要用视觉区分」是本项目的硬规则——同一种蓝会让人以为
- * 每根柱子都是同样可信的读数，而灰色的那几根在快速启动的机器上
- * 可能是跨了好几次开关机的累计运行时长。宁可难看，不可误导。
+ * 「实测 / 估算要用视觉区分」是本项目的硬规则——同一种蓝会让人以为每根柱子
+ * 都是同样可信的读数，而灰色的那几根在快速启动的机器上可能是跨了好几次
+ * 开关机的累计运行时长。宁可难看，不可误导。
  */
 const BAR_ESTIMATED = '#6e7681'
 
@@ -96,7 +92,7 @@ export function BootSelfRecords({ records }: { records: BootRecord[] }) {
 
   const option = {
     backgroundColor: 'transparent',
-    animationDuration: 600,
+    animationDuration: 500,
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'shadow' },
@@ -104,23 +100,19 @@ export function BootSelfRecords({ records }: { records: BootRecord[] }) {
       borderColor: '#30363d',
       textStyle: { color: '#e6edf3', fontSize: 12 },
       formatter: (params: unknown) => {
-        const list = (Array.isArray(params) ? params : [params]) as Array<{
-          dataIndex?: number
-        }>
-        const i = list[0]?.dataIndex ?? 0
-        const r = recent[i]
+        const list = (Array.isArray(params) ? params : [params]) as Array<{ dataIndex?: number }>
+        const r = recent[list[0]?.dataIndex ?? 0]
         if (!r) return ''
-        const estimated = r.basis !== 'log'
         return (
           `开机于 ${tooltipLabelOf(r.bootStartedAt)}` +
           `<br/>用时 <b>${fmt(r.totalMs)}</b>` +
           `<br/><span style="color:${AXIS_TEXT}">自记账 · ${
-            estimated ? '按运行时长推算（估算）' : '系统日志确认（实测）'
+            r.basis !== 'log' ? '按运行时长推算（估算）' : '系统日志确认（实测）'
           }</span>`
         )
       },
     },
-    grid: { left: 52, right: 20, top: 22, bottom: 30 },
+    grid: { left: 0, right: 12, top: 22, bottom: 0, containLabel: true },
     xAxis: {
       type: 'category',
       data: labels,
@@ -133,16 +125,12 @@ export function BootSelfRecords({ records }: { records: BootRecord[] }) {
       axisLine: { show: false },
       axisTick: { show: false },
       splitLine: { lineStyle: { color: SPLIT_LINE } },
-      axisLabel: {
-        color: AXIS_TEXT,
-        fontSize: 10,
-        formatter: (v: number) => `${v}s`,
-      },
+      axisLabel: { color: AXIS_TEXT, fontSize: 10, formatter: (v: number) => `${v}s` },
     },
     series: [
       {
         name: '开机用时',
-        type: 'bar',
+        type: 'bar' as const,
         data: recent.map((r, i) => ({
           value: values[i],
           itemStyle: {
@@ -153,7 +141,7 @@ export function BootSelfRecords({ records }: { records: BootRecord[] }) {
         barMaxWidth: 26,
         label: {
           show: true,
-          position: 'top',
+          position: 'top' as const,
           formatter: (p: { value?: number }) => `${p.value ?? 0}s`,
           color: AXIS_TEXT,
           fontSize: 10,
@@ -163,14 +151,9 @@ export function BootSelfRecords({ records }: { records: BootRecord[] }) {
   }
 
   return (
-    <div className="rounded-card border border-line bg-base px-3 py-2.5">
-      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-        <span className="text-xs font-medium text-ink">最近几次开机用时</span>
-        <span className="text-2xs text-ink-dim">BootFlow 自记账 · 每次开机都记</span>
-      </div>
-
-      <p className="mt-1 text-2xs leading-5 text-ink-muted">
-        最近一次是 <span className="text-ink">{relTime(latest.bootStartedAt)}</span>，用时{' '}
+    <ChartCard title="最近几次开机用时" sub="BootFlow 自记账 · 每次开机都记">
+      <p className="text-2xs leading-5 text-ink-muted">
+        最近一次 <span className="text-ink-dim">{relTime(latest.bootStartedAt)}</span>，用时{' '}
         <span className="tnum font-semibold text-ink">{fmt(latest.totalMs)}</span>
         {latest.basis !== 'log' && <span className="text-ink-dim">（推算）</span>}
         <span className="text-ink-dim">
@@ -179,29 +162,29 @@ export function BootSelfRecords({ records }: { records: BootRecord[] }) {
         </span>
       </p>
 
-      <ReactECharts
-        option={option}
-        style={{ height: 150, width: '100%', marginTop: 4 }}
-        opts={{ renderer: 'svg' }}
-        notMerge
-      />
-
-      {estimatedCount > 0 && (
-        <p className="mt-1 text-2xs leading-5" style={{ color: '#d29922' }}>
-          灰色那 {estimatedCount} 条是<span className="font-medium">按运行时长推算</span>的，
-          不是实测——当时系统日志读不到，而系统日志读不到时算出的数字可能把好几次
-          开关机算成一次。蓝色的是系统日志确认过的实测值。
-        </p>
+      {/* 只有一条时没有趋势可言，画一根柱只是重复上面那句话 */}
+      {recent.length >= 2 && (
+        <div data-chart="boot-history">
+          <ReactECharts
+            option={option}
+            style={{ height: 132, width: '100%', marginTop: 4 }}
+            opts={{ renderer: 'svg' }}
+            notMerge
+          />
+        </div>
       )}
 
-      <p className="mt-1 text-2xs leading-5 text-ink-dim">
-        这是 BootFlow 自己在每次开机时记的<span className="text-ink-muted">总时长</span>
-        （系统启动 → 登录完成）。它不需要管理员权限，开了快速启动也一样有记录。
-        <span className="text-ink-muted">
-          {' '}
-          但它拿不到「每一段各花了多久」——那需要系统事件日志，系统只在开机偏慢时写。
-        </span>
+      <p className="text-2xs leading-5 text-ink-dim">
+        这是系统启动 → 登录完成的总时长。它只有总时长，拿不到「每一段各花了多久」
+        ——那需要系统事件日志，而系统只在开机偏慢时写。
+        {estimatedCount > 0 && (
+          <>
+            {' '}
+            <span style={{ color: '#d29922' }}>灰色那 {estimatedCount} 条是按运行时长推算的，不是实测</span>
+            （当时读不到系统日志，那种情况下算出来的数字可能把好几次开关机算成一次）。
+          </>
+        )}
       </p>
-    </div>
+    </ChartCard>
   )
 }
